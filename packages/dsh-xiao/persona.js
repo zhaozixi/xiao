@@ -452,8 +452,18 @@ export const SPEC = {
   invalidRecords: 'backup-and-skip',
   tables: {
     facts: { valueSchema: factSchema(isFactRecord, 'fact record') },
+    // Additive table (no record-shape change): one profile-level flag per key, e.g.
+    // whether the one and only Xiao has already been introduced.
+    flags: { valueSchema: factSchema(isFlagRecord, 'flag record') },
   },
 };
+
+function isFlagRecord(value) {
+  if (!isPlainObject(value)) return false;
+  if (typeof value.at !== 'number' || !Number.isFinite(value.at)) return false;
+  if (value.reason !== undefined && typeof value.reason !== 'string') return false;
+  return true;
+}
 
 export function compareSeq(a, b) {
   return a.seq - b.seq;

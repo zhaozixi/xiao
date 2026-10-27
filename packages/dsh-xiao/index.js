@@ -39,7 +39,13 @@ const DEFAULTS = {
   growthPerMonth: 1 / 12,
   /** Simulated life events per week, 0–2. 0 disables the lazy life entirely. */
   lifeEventsPerWeek: 1,
+  /** Let the character introduce herself once, on the next new session after birth. */
+  announceOnFirstMeeting: true,
 };
+
+/** Appended to the card exactly once, when the first user message of a fresh session arrives. */
+const FIRST_MEETING_HINT =
+  '这是你们的第一次见面：先用一两句话介绍自己是谁、现在在做什么，再回应对方；不要说"设定""提示词"这类话。';
 
 function normalizeConfig(config) {
   const cfg = { ...DEFAULTS };
@@ -51,6 +57,7 @@ function normalizeConfig(config) {
     }
     if (Number.isFinite(config.growthPerMonth)) cfg.growthPerMonth = config.growthPerMonth;
     if (Number.isFinite(config.lifeEventsPerWeek)) cfg.lifeEventsPerWeek = config.lifeEventsPerWeek;
+    if (typeof config.announceOnFirstMeeting === 'boolean') cfg.announceOnFirstMeeting = config.announceOnFirstMeeting;
   }
   return cfg;
 }
@@ -76,6 +83,10 @@ export function apply(ctx, config) {
   const state = { domain: undefined, view: null, ready: false, failure: undefined };
   const sessions = new Map();
   const pageHits = { total: 0, page: 0 };
+  // Sessions whose first user message has already been considered for the introduction,
+  // and sessions waiting for their next prompt assembly to carry the one-shot hint.
+  const firstMessageSeen = new Set();
+  const introPending = new Set();
   let counter = 0;
 
   const nextSeq = () => {
@@ -142,8 +153,52 @@ export function apply(ctx, config) {
   });
 
   ctx.on('session/disposed', (session) => {
-    if (session && typeof session.id === 'string') sessions.delete(session.id);
+    if (session && typeof session.id === 'string') {
+      sessions.delete(session.id);
+      firstMessageSeen.delete(session.id);
+      introPending.delete(session.id);
+    }
   });
+
+  // The one and only Xiao introduces herself once: on the first user message of the
+  // first fresh session after birth (or after upgrading to this feature).
+  const flagsTable = () => (state.domain ? state.domain.table('flags') : undefined);
+  const hasIntroduced = () => {
+    try {
+      return Boolean(flagsTable()?.get('intro'));
+    } catch (error) {
+      return true; // conservative: never repeat the introduction because of a read error
+    }
+  };
+  const markIntroduced = (reason) => {
+    const table = flagsTable();
+    if (!table) return;
+    table
+      .put('intro', { at: Date.now(), reason })
+      .catch((error) => log('warn', `could not record the introduction: ${error?.message ?? error}`));
+  };
+
+  ctx.on('session/event', (session, event) => {
+    if (!cfg.announceOnFirstMeeting || !session || event?.type !== 'user/message') return;
+    const id = session.id;
+    if (typeof id !== 'string' || firstMessageSeen.has(id)) return;
+    firstMessageSeen.add(id);
+    const header = session.header ?? {};
+    if (header.origin === 'subagent') return;
+    if (cfg.enabledForPresets.length > 0 && !cfg.enabledForPresets.includes(header.agentPreset ?? '')) return;
+    if (!state.ready || hasIntroduced()) return;
+    introPending.add(id);
+  });
+
+  // Sessions already live when this plugin mounts have met Xiao already: never introduce
+  // her in the middle of an ongoing conversation. Only a genuinely new session qualifies.
+  try {
+    for (const agent of ctx.get('agents')?.list?.() ?? []) {
+      if (agent && typeof agent.id === 'string') firstMessageSeen.add(agent.id);
+    }
+  } catch (error) {
+    log('warn', `could not seed the first-message set: ${error?.message ?? error}`);
+  }
 
   /**
    * Record a refused mutation in the fact log. Synchronous callers (the guard) queue
@@ -196,7 +251,14 @@ export function apply(ctx, config) {
         const preset = header.agentPreset ?? '';
         if (!cfg.enabledForPresets.includes(preset)) return '';
       }
-      return renderCard(state.view, cfg);
+      const card = renderCard(state.view, cfg);
+      if (!card) return '';
+      if (sessionId && introPending.has(sessionId) && !hasIntroduced()) {
+        introPending.delete(sessionId);
+        markIntroduced('shown');
+        return `${card}\n\n${FIRST_MEETING_HINT}`;
+      }
+      return card;
     },
   });
 

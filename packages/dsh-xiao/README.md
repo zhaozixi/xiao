@@ -52,6 +52,7 @@ dsh --profile <name> ...   # 具体以 plugin_manager 返回为准
 | `enabledForPresets` | `[]` | 允许注入人设卡的 preset 名。空数组 = 所有 session 都注入 |
 | `growthPerMonth` | `1/12` | 年龄增速（岁/月），被夹到 `[1/12, 1/4]` |
 | `lifeEventsPerWeek` | `1` | 每周模拟事件数，`0–2`；`0` 关闭生活模拟 |
+| `announceOnFirstMeeting` | `true` | 新会话的第一条用户消息到达时，让晓用一两句话介绍自己；**只发生一次** |
 
 > 要"只在名为 `xiao` 的 preset 里出现"，设 `enabledForPresets: ["xiao"]`。
 
@@ -85,6 +86,8 @@ dsh --profile <name> ...   # 具体以 plugin_manager 返回为准
   "evidence": "confirmed"    // confirmed | unverified | disputed | superseded
 }
 ```
+
+**另一张表 `flags`**：只存 profile 级的一次性标记，目前只有 `intro`（`{at, reason}`，表示晓已经做过自我介绍）。它不参与角色状态，加这张表没有改变 `facts` 的记录形状，所以 `SPEC.version` 仍是 1。
 
 | `kind` | `data` | 谁写 |
 |---|---|---|
