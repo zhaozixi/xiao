@@ -257,7 +257,9 @@ export function renderCard(view, cfg) {
     const trimmed = traits.slice(0, spare);
     card = spare > 0 ? `${head}\n${trimmed}\n${disclaimer}` : `${head}\n${disclaimer}`;
   }
-  return card;
+  // Hard guarantee: the card never exceeds the budget, even when the budget cannot
+  // hold the head and the disclaimer together.
+  return card.length > budget ? card.slice(0, budget) : card;
 }
 
 // ---------------------------------------------------------------------------
@@ -472,11 +474,16 @@ export function fold(records, cfg, now) {
   }
   const facts = live.filter((fact) => !dead.has(fact.seq));
 
-  const births = facts.filter((fact) => fact.kind === 'birth');
+  // A birth record with no usable seed cannot be folded; skip it instead of throwing,
+  // so a corrupt record degrades to "no character yet" rather than a hard failure.
+  const births = facts.filter(
+    (fact) => fact.kind === 'birth' && typeof fact.data.seed === 'string' && fact.data.seed.length > 0,
+  );
   if (births.length === 0) return null;
   const birth = births.reduce((a, b) =>
     a.at < b.at || (a.at === b.at && String(a.data.instanceId) <= String(b.data.instanceId)) ? a : b,
   );
+  const birthAt = Number.isFinite(birth.data.birthAt) ? birth.data.birthAt : birth.at;
 
   const base = derivePersona(birth.data.seed);
   const overrides = new Map();
@@ -504,14 +511,14 @@ export function fold(records, cfg, now) {
     }
   }
 
-  const months = Math.max(0, (now - birth.data.birthAt) / (30 * 24 * 60 * 60 * 1000));
+  const months = Math.max(0, (now - birthAt) / (30 * 24 * 60 * 60 * 1000));
   const growth = clamp(Number(cfg?.growthPerMonth ?? 1 / 12), 1 / 12, 1 / 4);
   const aged = clamp(base.age + Math.floor(months * growth), AGE_MIN, AGE_MAX);
 
   return {
     instanceId: birth.data.instanceId,
     seed: birth.data.seed,
-    bornAt: birth.data.birthAt,
+    bornAt: birthAt,
     rulesVersion: birth.data.rulesVersion,
     gender: base.gender,
     genderWord: base.genderWord,

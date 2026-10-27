@@ -9,7 +9,9 @@
  * v0.2: `xiao_update` under a state machine, a monotonic guard on immutable fields,
  *       logical deletion by tombstone, history reads.
  * v0.3: lazy simulated life (`xiao_life`), freeze-on-speak, derived tone.
- * v0.4: read-only settings page over GET /xiao/state, and `xiao_export`. See ROADMAP.md.
+ * v0.4: read-only settings page and `xiao_export`.
+ * v1.1: the page feed moved onto the authenticated connection channel
+ *       (`/api/xiao.state`), replacing the earlier bare web route. See ROADMAP.md.
  */
 
 import {
@@ -73,6 +75,7 @@ export function apply(ctx, config) {
   const cfg = normalizeConfig(config);
   const state = { domain: undefined, view: null, ready: false, failure: undefined };
   const sessions = new Map();
+  const pageHits = { total: 0, page: 0 };
   let counter = 0;
 
   const nextSeq = () => {
@@ -401,7 +404,6 @@ export function apply(ctx, config) {
   // channel (`/api/...`) rather than on a bare web-server route: the carrier applies
   // the Host/Origin checks and browser authentication, so this endpoint is not readable
   // by an arbitrary local process. `pageHits` stays as a diagnostic counter.
-  const pageHits = { total: 0, page: 0 };
   const connection = ctx.get('connection');
   if (connection && connection.fetch && typeof connection.fetch.register === 'function') {
     ctx.effect(() => {
@@ -411,6 +413,13 @@ export function apply(ctx, config) {
         requestBody: 'buffered',
         fetch: async (request) => {
           if (request.method !== 'GET') return new Response('method not allowed', { status: 405 });
+          // The page's mount beacon: answer it cheaply and keep it out of the counters,
+          // so `page` means "the page actually loaded data".
+          if (new URL(request.url, 'http://localhost').searchParams.has('ping')) {
+            return new Response('{"ok":true}', {
+              headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+            });
+          }
           pageHits.total += 1;
           if (request.headers.get('x-xiao-client') === 'settings') pageHits.page += 1;
           let body;
