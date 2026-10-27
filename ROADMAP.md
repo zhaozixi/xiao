@@ -209,6 +209,27 @@ M0 骨架 ──> M1 边界 ──> M2 生活 ──> M3 可见 ──> M4 冻�
 
 ---
 
+## 10 实现记录
+
+### v0.1 内核（2026-10-27）
+
+已交付：`packages/dsh-xiao/`（bundle `@local/dsh-xiao` 0.1.0，Loader 行 `include:dsh-xiao`），纯核心 `persona.js` + Cordis 接线 `index.js` + `test/persona.test.mjs`（11 条，全绿）。
+
+| 路线图验收 | 结果 | 证据 |
+|---|---|---|
+| 首装后能读到一致的自我 | 通过 | `xiao_state` 返回的人设卡与注入到提示里的卡逐字一致 |
+| 卸载/重载后身份不变 | 通过 | 禁用→启用（新模块代）后身份与卡内容不变 |
+| 落盘为唯一事实源 | 通过 | `~/.dsh/storages/dsh_xiao.json`，1 条 `birth` 事实，无其他状态 |
+| 同种子可复现（纯函数层） | 通过 | `derivePersona` 单测；真实 profile 双实例对照留到 v0.4 评估脚本 |
+| subagent 不注入 | 未验证 | 需要一个真实 subagent session 观察 |
+
+偏离与修正（按本文"先改这里，再改代码"的约定记录）：
+
+1. **存储单元名不能用连字符**：`UNIT_NAME_RE = /^[a-z][a-z0-9_]*$/`，domain 名由 `dsh-xiao` 改为 `dsh_xiao`；包名与 Loader 行 id 不受影响。
+2. **D4 的 preset 门控已实现但默认放开**：`enabledForPresets` 默认 `[]`（对所有 session 注入），否则装完看不到任何东西。要回到 D4 的语义，把它设为 `['xiao']`。
+3. **不 import 任何 `@deepseek-ai/*` 包**：Storage 的 `valueSchema` 实际只调用 `parse` / `safeParse`（`dsh-storage-domain/lib/index.js:74,371`），所以手写最小 schema 对象即可，避免在 profile 里做裸模块解析。
+4. **v0.1 的注入范围是整份 profile**：插件一旦启用，每个 session 都带人设卡（本会话亦然）。这是上表第 2 条的直接后果，不是 bug；v0.2 起用 preset 或开关收紧。
+
 ## 附录 A：与 `晓v3.0.md` 的偏离
 
 | 论文机制 | 本插件 | 处置理由 |

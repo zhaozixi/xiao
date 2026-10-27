@@ -1,0 +1,4 @@
+- insert:
+    - id: dsh-xiao
+      name: '@local/dsh-xiao'
+      config: {}
