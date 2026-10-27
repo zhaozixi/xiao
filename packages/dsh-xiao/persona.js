@@ -242,7 +242,7 @@ export function renderCard(view, cfg) {
   const disclaimer = '你是 DSH 里的虚拟角色，不是真人；下面的设定与经历都是虚构的，不是真实事件。';
   const head = `你是晓，${view.genderWord}，${view.age} 岁，${view.job}。`;
   const traits = `${view.outlook}；${view.curiosity}；${view.speech}。`;
-  const flavor = `闲下来会${view.hobby}；${view.quirk}。`;
+  const flavor = `闲下来会${view.hobby}；${view.quirk}。现在${view.tone ?? '平静'}。`;
   const recent = view.recent && view.recent.length > 0 ? `最近：${view.recent[0]}。` : '';
 
   const lines = [head, traits];
@@ -258,6 +258,150 @@ export function renderCard(view, cfg) {
     card = spare > 0 ? `${head}\n${trimmed}\n${disclaimer}` : `${head}\n${disclaimer}`;
   }
   return card;
+}
+
+// ---------------------------------------------------------------------------
+// Lazy simulated life (v0.3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Event templates per job category. Nothing here may describe work for a category
+ * that cannot work: the shared `any` pool is deliberately work-free.
+ */
+const LIFE_TEMPLATES = {
+  student: [
+    ['study', '上午连着两节课，笔记记到手酸'],
+    ['study', '在图书馆待到闭馆才走'],
+    ['study', '小组作业开到晚上，还是没定题'],
+    ['social', '和同学在食堂多聊了半小时'],
+    ['rest', '课少，回宿舍补了个觉'],
+    ['rest', '逃了一节早课，醒来有点愧疚'],
+    ['good', '在旧书店翻到一本便宜的诗集'],
+    ['mishap', '忘记交作业，被提醒了一次'],
+  ],
+  employed: [
+    ['work', '开了一个拖到下班前的会'],
+    ['work', '把拖了两天的表格终于写完'],
+    ['work', '加班到地铁最后一班'],
+    ['work', '帮同事顶了一个急活'],
+    ['social', '和同事下楼吃了碗面'],
+    ['rest', '准点下班，绕路走了两站'],
+    ['mishap', '电脑蓝屏，半天的工作要重做'],
+    ['good', '一直悬着的需求终于通过了'],
+  ],
+  job_seeking: [
+    ['work', '去面了一家小公司，聊了四十分钟'],
+    ['mishap', '投出去的简历又没有回音'],
+    ['study', '下午改简历改到烦'],
+    ['work', '跑了第二趟招聘会'],
+    ['rest', '在家躺了一天，晚上才觉得该动起来'],
+    ['good', '约到了一场下周的面试'],
+  ],
+  unemployed: [
+    ['rest', '睡到自然醒，然后有点心虚'],
+    ['work', '跑了一趟人才市场'],
+    ['mishap', '算了算余额，决定这个月少买东西'],
+    ['rest', '把简历摊在桌上，看了一会儿又合上'],
+    ['good', '朋友介绍了一个临时活'],
+    ['social', '和朋友吃了顿饭，被问起近况'],
+  ],
+  retired: [
+    ['rest', '早上绕公园走了两圈'],
+    ['social', '和老邻居在楼下下了一盘棋'],
+    ['good', '养的茉莉开了第二茬'],
+    ['rest', '把旧相册翻出来看了一下午'],
+    ['social', '去社区活动室听了一场讲座'],
+    ['mishap', '膝盖有点疼，少走了两圈'],
+  ],
+  any: [
+    ['rest', '试着做了道新菜，盐放多了'],
+    ['rest', '把攒了一周的纪录片看了半集'],
+    ['good', '路过花店，买了一小盆绿植'],
+    ['rest', '把屋子收拾了一遍，扔掉一袋旧东西'],
+    ['good', '走错路，发现一家没去过的小店'],
+    ['mishap', '手机屏摔裂了一道'],
+  ],
+};
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Tone is a pure function of the committed events — never stored, so it can never
+ * drift away from what actually happened.
+ * @param {object[]} events - committed events.
+ * @returns {string} one of a small closed set.
+ */
+export function toneOf(events) {
+  if (!Array.isArray(events) || events.length === 0) return '平静';
+  const latest = [...events].sort((a, b) => b.at - a.at)[0];
+  switch (latest.kind) {
+    case 'work':
+    case 'study':
+      return '有点累';
+    case 'mishap':
+      return '不太顺';
+    case 'good':
+    case 'social':
+      return '心情不错';
+    case 'rest':
+      return '松下来';
+    default:
+      return '平静';
+  }
+}
+
+function generateWeek(seed, week, view, cap) {
+  if (cap <= 0) return [];
+  const rnd = mulberry32(hashString(`${seed}#w${week}`));
+  const count = 1 + Math.floor(rnd() * cap);
+  const pool = [...(LIFE_TEMPLATES[view?.jobCategory] ?? []), ...LIFE_TEMPLATES.any];
+  const out = [];
+  for (let slot = 0; slot < count; slot += 1) {
+    const dayOffset = Math.floor(rnd() * 7);
+    const [kind, text] = pool[Math.min(pool.length - 1, Math.floor(rnd() * pool.length))];
+    out.push({ id: `${week}.${slot}`, week, day: week * 7 + dayOffset, kind, text, simulated: true });
+  }
+  return out;
+}
+
+/**
+ * Generate the simulated life for one recent window. Deterministic and lazy: the same
+ * (seed, view, week) always yields the same events, and a committed event always wins
+ * over the generated one, so anything already spoken about stops moving.
+ * @param {{seed: string, view: object, cfg: object, days?: number, now?: number}} input - generation input.
+ * @returns {{events: object[], tone: string, fromDay: number, toDay: number}} window result.
+ */
+export function generateLife({ seed, view, cfg, days = 7, now = Date.now() }) {
+  const cap = clamp(Math.floor(Number(cfg?.lifeEventsPerWeek ?? 0)), 0, 2);
+  const span = clamp(Math.floor(Number(days) || 7), 1, 60);
+  const today = Math.floor(now / DAY_MS);
+  const fromDay = today - span + 1;
+  const fromWeek = Math.floor(fromDay / 7);
+  const toWeek = Math.floor(today / 7);
+
+  const committed = new Map();
+  for (const event of view?.eventsAll ?? []) if (event.id) committed.set(event.id, event);
+
+  const byId = new Map();
+  for (let week = fromWeek; week <= toWeek; week += 1) {
+    for (const generated of generateWeek(seed, week, view, cap)) {
+      if (generated.day < fromDay || generated.day > today) continue;
+      byId.set(generated.id, generated);
+    }
+  }
+  for (const [id, event] of committed) {
+    if (event.day >= fromDay && event.day <= today) byId.set(id, { ...event, simulated: true });
+  }
+
+  const events = [...byId.values()]
+    .map((event) => ({
+      ...event,
+      date: new Date(event.day * DAY_MS).toISOString().slice(0, 10),
+      committed: committed.has(event.id),
+    }))
+    .sort((a, b) => a.day - b.day || a.id.localeCompare(b.id));
+
+  return { events, tone: toneOf(view?.eventsAll ?? []), fromDay, toDay: today };
 }
 
 // ---------------------------------------------------------------------------
@@ -348,7 +492,13 @@ export function fold(records, cfg, now) {
       if (typeof fact.data.job === 'string' && fact.data.job.length > 0) job = fact.data.job;
       if (JOB_CATEGORIES.includes(fact.data.category)) jobCategory = fact.data.category;
     } else if (fact.kind === 'event') {
-      events.push({ at: fact.at, text: String(fact.data.text ?? '') });
+      events.push({
+        id: String(fact.data.id ?? ''),
+        day: Number(fact.data.day ?? 0),
+        kind: String(fact.data.kind ?? 'rest'),
+        at: fact.at,
+        text: String(fact.data.text ?? ''),
+      });
     } else if (fact.kind === 'user_fact' || fact.kind === 'health') {
       notes.push(String(fact.data.text ?? ''));
     }
@@ -374,7 +524,9 @@ export function fold(records, cfg, now) {
     hobby: base.hobby,
     quirk: base.quirk,
     notes,
-    recent: events.sort((a, b) => b.at - a.at).slice(0, 3).map((event) => event.text),
+    eventsAll: [...events].sort((a, b) => b.at - a.at),
+    recent: [...events].sort((a, b) => b.at - a.at).slice(0, 3).map((event) => event.text),
+    tone: toneOf(events),
     factCount: facts.length,
   };
 }

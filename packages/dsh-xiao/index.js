@@ -18,6 +18,7 @@ import {
   RULES_VERSION,
   compareSeq,
   fold,
+  generateLife,
   isPlainObject,
   planUpdate,
   renderCard,
@@ -32,6 +33,8 @@ const DEFAULTS = {
   enabledForPresets: [],
   /** Age growth in years per elapsed month; clamped to [1/12, 1/4]. */
   growthPerMonth: 1 / 12,
+  /** Simulated life events per week, 0–2. 0 disables the lazy life entirely. */
+  lifeEventsPerWeek: 1,
 };
 
 function normalizeConfig(config) {
@@ -43,6 +46,7 @@ function normalizeConfig(config) {
       cfg.enabledForPresets = config.enabledForPresets.filter((name) => typeof name === 'string');
     }
     if (Number.isFinite(config.growthPerMonth)) cfg.growthPerMonth = config.growthPerMonth;
+    if (Number.isFinite(config.lifeEventsPerWeek)) cfg.lifeEventsPerWeek = config.lifeEventsPerWeek;
   }
   return cfg;
 }
@@ -188,6 +192,63 @@ export function apply(ctx, config) {
         if (!cfg.enabledForPresets.includes(preset)) return '';
       }
       return renderCard(state.view, cfg);
+    },
+  });
+
+  ctx.tools.register({
+    name: 'xiao_life',
+    description:
+      "Read what Xiao has been up to in a recent window of simulated everyday life, and freeze the events she has actually talked about. Lazy and deterministic: the same week always yields the same events, so asking twice cannot produce contradictions. Everything here is simulation, not real events — say so when you mention one. When you tell the user about an event, call again with speak:[id] so it never changes afterwards.",
+    parameters: {
+      type: 'object',
+      properties: {
+        days: { type: 'number', description: 'How many past days to look back, 1–60 (default 7).' },
+        speak: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Event ids you actually mentioned to the user; they are frozen from now on.',
+        },
+      },
+      additionalProperties: false,
+    },
+    output: {
+      schema: { type: 'object', additionalProperties: true },
+      render: (args, value) => [{ type: 'text', text: '```json\n' + JSON.stringify(value, null, 2) + '\n```' }],
+    },
+    async execute(args) {
+      if (!state.ready) return { simulated: true, ready: false, reason: state.failure ?? 'still opening storage' };
+      let view = refresh();
+      if (!view) return { simulated: true, ready: false, reason: '实例还没有诞生，先正常对话一次' };
+      const input = isPlainObject(args) ? args : {};
+
+      const speak = Array.isArray(input.speak) ? input.speak.filter((id) => typeof id === 'string').slice(0, 10) : [];
+      const frozen = [];
+      if (speak.length > 0 && cfg.lifeEventsPerWeek > 0) {
+        const preview = generateLife({ seed: view.seed, view, cfg, days: 60, now: Date.now() });
+        for (const id of speak) {
+          const event = preview.events.find((candidate) => candidate.id === id);
+          if (!event || event.committed) continue;
+          await writeFact('event', { id: event.id, day: event.day, kind: event.kind, text: event.text }, 'sim', 'confirmed');
+          frozen.push(id);
+        }
+        if (frozen.length > 0) view = refresh() ?? view;
+      }
+
+      const days = Math.min(60, Math.max(1, Math.floor(Number(input.days ?? 7)) || 7));
+      const result = generateLife({ seed: view.seed, view, cfg, days, now: Date.now() });
+      return {
+        simulated: true,
+        days,
+        fromDay: result.fromDay,
+        toDay: result.toDay,
+        tone: result.tone,
+        events: result.events.map((event) => ({ ...event, simulated: true })),
+        frozen,
+        note:
+          cfg.lifeEventsPerWeek > 0
+            ? '模拟内容，不是真实发生的事。未固化的事件下次可能不同；你亲口说过的事件用 speak 固化后不再变化。'
+            : '生活模拟已关闭（lifeEventsPerWeek=0），这里没有内容。',
+      };
     },
   });
 
