@@ -27,7 +27,7 @@ DSH 里的持久角色内核。一个由种子决定的角色「晓」，跨会�
 3. **删不掉会话日志里已经说过的话**。`forget` 只让事实在视图里消失，对话记录仍在。
 4. **不拦截模型输出**。18 禁、不得冒充真人、模拟事件标注，这些靠提示词与状态约束**影响**生成，不保证拦得住。
 5. **不跨 profile 共享实例**。每个 profile 一个晓。
-6. **`GET /xiao/state` 未接入连接令牌**（安全说明，见 §7）。
+6. **不提供未经鉴权的只读接口**。设置页的数据走 DSH 的 connection 通道（`/api/xiao.state`），无凭证请求返回 401；没有裸露的 HTTP 路由。
 
 ## 3. 安装
 
@@ -37,7 +37,7 @@ DSH 里的持久角色内核。一个由种子决定的角色「晓」，跨会�
 dsh --profile <name> ...   # 具体以 plugin_manager 返回为准
 ```
 
-- 依赖 Host 服务：`storageDomain`、`systemPrompt`、`tools`、`webServer`。
+- 依赖 Host 服务：`storageDomain`、`systemPrompt`、`tools`、`connection`。
 - 数据落在 `~/.dsh/storages/dsh_xiao.json`（`storage-json` 后端）。
 - 客户端半边（设置页）由 `dsh.client` 声明，**首次出现或改动后需要重启 DSH** 才会被浏览器加载。
 
@@ -117,7 +117,7 @@ dsh --profile <name> ...   # 具体以 plugin_manager 返回为准
 | 设置页显示「读取失败」 | `/xiao/state` 不可达（插件未激活、端口变化） | 检查插件行是否 `active` |
 | 想从头开始 | — | 删除 `~/.dsh/storages/dsh_xiao.json`，下次激活会重新投胎，**不可逆** |
 
-**安全说明（必须知道）**：`/xiao/state` 只读、GET-only、跨站请求返回 403，但**它没有接入 DSH 的连接令牌**——壳层对 `/` 返回 401，对这个路由返回 200。它只在本机回环地址上监听，且本机进程本来就能直接读那个 JSON 文件；但这是一个已知缺口，不是设计意图。把页面数据挪到鉴权的 Remote 通道是 v1.0 之后的待办，记录在 ROADMAP 偏离清单第 6 条。
+**安全说明（必须知道）**：设置页的数据来自 `GET /api/xiao.state`，它注册在 DSH 的 connection 通道上，由载波统一做 Host/Origin 检查与浏览器鉴权——**无凭证的直连返回 401**。v1.0 曾有一个未鉴权的 `/xiao/state`，已移除。`xiao_state` 返回里的 `pageRequests`（`total` / `page`）可以用来核对页面请求是否被接受。
 
 ## 8. 评估数据出口
 

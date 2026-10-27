@@ -291,7 +291,7 @@ M0 骨架 ──> M1 边界 ──> M2 生活 ──> M3 可见 ──> M4 冻�
 3. **迁移演练推迟到 v1.0**：没有安全的离线 domain 环境，改 live 存储文件的收益小于风险。
 4. **Client 侧 Service 必须显式 inject**。`ctx.locale` 在未声明的模块里访问会直接抛 `cannot get property "locale" without inject`；而且访问语句本身要放进 `try`（我第一版把 `try` 写在它下一行，于是白屏）。
 5. **页面并不与 Host 同源**。页面跑在 `dsh-app://` 下、跨源请求 `http://127.0.0.1:<port>/xiao/state`，靠 Electron 的宽松策略才通得过；因此 `Sec-Fetch-Site` 不是可用判据（实测页面的 6 次请求全被记成 `direct`）。改用页面自带 `x-xiao-client: settings` 头做诊断计数，跨站 403 仍然保留。
-6. **`/xiao/state` 没有接入连接令牌**。壳层对 `/` 返回 401，对这个路由返回 200——令牌机制在 connection 服务里，不在 webServer 里。当前姿态是"仅回环、只读、可计数"。真正的修法是把页面数据挪到鉴权的 Remote 通道，列为 v1.0 任务。
+6. **`/xiao/state` 没有接入连接令牌**。壳层对 `/` 返回 401，对这个路由返回 200——令牌机制在 connection 服务里，不在 webServer 里。当前姿态是"仅回环、只读、可计数"。真正的修法是把页面数据挪到鉴权的 Remote 通道，列为 v1.0 任务。**→ 已在 v1.1 修复。**
 
 ### v1.0 冻结（2026-10-27）
 
@@ -309,6 +309,23 @@ M0 骨架 ──> M1 边界 ──> M2 生活 ──> M3 可见 ──> M4 冻�
 
 1. **迁移演练改成"金标准 + 拒绝未知"的自动测试**，而不是改 live 存储文件做手工演练。后者风险大于收益；fixture 测试每次改动都会跑，覆盖同一件事。
 2. **设置页面距收紧**（标题 16→12、行距 3→2、卡片 12/14→10/12），整页矮约 40px，顶部的「晓 · dsh-xiao」不再需要滚动才能看到。
+
+### v1.1 补上鉴权缺口（2026-10-28）
+
+v1.0 留下的唯一"能跑但不该这样跑"的地方：设置页读的是一个裸 HTTP 路由，绕过了 app 的连接令牌。本版把它移到 DSH 自己的鉴权通道。
+
+已交付：`ctx.connection.fetch.register({ path: '/api/xiao.state', methods: ['GET'], requestBody: 'buffered' })`；删掉 `ctx.webServer.register` 的裸路由；客户端改取文档相对路径 `api/xiao.state`；`xiao_state` 增加 `pageRequests` 计数器便于核对。
+
+| 验收 | 结果 | 证据 |
+|---|---|---|
+| 无凭证不可读 | 通过 | `curl /api/xiao.state` → **401**；旧的 `/xiao/state` → **404** |
+| 页面仍能取数 | 通过 | 硬刷新后页面内容正常；`xiao_state.pageRequests` 从 `{0,0}` 变为 `{total:4, page:4}` |
+| 依赖声明正确 | 通过 | `inject` 由 `webServer` 换成 `connection` |
+
+偏离与修正：
+
+1. **注册路径用绝对形式 `/api/xiao.state`，客户端用文档相对形式 `api/xiao.state`**。这是 DSH 内部约定：Host 注册带前导斜杠的绝对路径，浏览器从 `dsh-app://` 文档相对寻址，壳层负责转发与鉴权（参照 `dsh-session-log-export` 的 `SESSION_LOG_EXPORT_PATH` 写法）。
+2. **不再自己做跨站判断**：`Sec-Fetch-Site` 由载波处理，插件只留 `total/page` 两个诊断计数。
 
 ## 附录 A：与 `晓v3.0.md` 的偏离
 

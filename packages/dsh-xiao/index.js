@@ -361,6 +361,7 @@ export function apply(ctx, config) {
         knows: view.notes,
         card: renderCard(view, cfg),
         factsCount: view.factCount,
+        pageRequests: { ...pageHits },
       };
       if (input.includeFacts) payload.facts = scoped.sort(compareSeq);
       return payload;
@@ -396,55 +397,41 @@ export function apply(ctx, config) {
     };
   };
 
-  // Read-only feed for the settings page: GET-only, no writes.
-  //
-  // Known limitation: this route is NOT behind the app's connection token (the shell
-  // answers 401 for `/` while this one answers 200), because the token mechanism lives
-  // in the connection service rather than the web server. The page is loaded from the
-  // `dsh-app://` scheme and reaches this route cross-origin, so `Sec-Fetch-Site` is not
-  // a usable discriminator either — the page marks its own requests with a header
-  // instead, purely as a diagnostic. Moving the feed onto the authenticated Remote
-  // channel is a v1.0 task.
-  const pageHits = { total: 0, page: 0, rejected: 0 };
-  const webServer = ctx.get('webServer');
-  if (webServer && typeof webServer.register === 'function') {
-    ctx.effect(() =>
-      webServer.register({
-        kind: 'exact',
-        path: '/xiao/state',
-        handler: (req, res) => {
-          if (String(req.method ?? 'GET').toUpperCase() !== 'GET') {
-            res.statusCode = 405;
-            res.setHeader('content-type', 'text/plain; charset=utf-8');
-            res.end('method not allowed');
-            return;
-          }
-          if (String(req.headers?.['sec-fetch-site'] ?? '') === 'cross-site') {
-            pageHits.rejected += 1;
-            res.statusCode = 403;
-            res.setHeader('content-type', 'text/plain; charset=utf-8');
-            res.end('cross-site requests are not served');
-            return;
-          }
+  // Read-only feed for the settings page, served on the authenticated connection
+  // channel (`/api/...`) rather than on a bare web-server route: the carrier applies
+  // the Host/Origin checks and browser authentication, so this endpoint is not readable
+  // by an arbitrary local process. `pageHits` stays as a diagnostic counter.
+  const pageHits = { total: 0, page: 0 };
+  const connection = ctx.get('connection');
+  if (connection && connection.fetch && typeof connection.fetch.register === 'function') {
+    ctx.effect(() => {
+      const dispose = connection.fetch.register({
+        path: '/api/xiao.state',
+        methods: ['GET'],
+        requestBody: 'buffered',
+        fetch: async (request) => {
+          if (request.method !== 'GET') return new Response('method not allowed', { status: 405 });
           pageHits.total += 1;
-          if (req.headers?.['x-xiao-client'] === 'settings') pageHits.page += 1;
+          if (request.headers.get('x-xiao-client') === 'settings') pageHits.page += 1;
           let body;
           try {
             body = JSON.stringify(snapshotOf(state.ready ? refresh() : null));
           } catch (error) {
-            res.statusCode = 500;
-            res.setHeader('content-type', 'text/plain; charset=utf-8');
-            res.end(String(error?.message ?? error));
-            return;
+            return new Response(String(error?.message ?? error), { status: 500 });
           }
-          res.statusCode = 200;
-          res.setHeader('content-type', 'application/json; charset=utf-8');
-          res.setHeader('cache-control', 'no-store');
-          res.end(body);
+          return new Response(body, {
+            headers: {
+              'content-type': 'application/json; charset=utf-8',
+              'cache-control': 'no-store',
+            },
+          });
         },
-      }),
-    );
-    log('info', 'serving GET /xiao/state for the settings page');
+      });
+      log('info', 'serving GET /api/xiao.state for the settings page');
+      return () => dispose();
+    });
+  } else {
+    log('warn', 'connection service unavailable: the settings page has no data feed');
   }
 
   ctx.tools.register({
@@ -484,4 +471,4 @@ export function apply(ctx, config) {
   log('info', 'mounted');
 }
 
-export const inject = ['storageDomain', 'systemPrompt', 'tools', 'webServer'];
+export const inject = ['storageDomain', 'systemPrompt', 'tools', 'connection'];

@@ -310,7 +310,7 @@ window.__ModuleLoader__.load({
       const ctx = props?.ctx;
       const lang = useLang(ctx);
       const dict = DICT[lang] ?? DICT.zh;
-      const snapshot = useSnapshot('/xiao/state');
+      const snapshot = useSnapshot('api/xiao.state');
       let content;
       try {
         content = contentOf(snapshot, dict);
