@@ -7,7 +7,9 @@
  *
  * v0.1: birth, persona card injection, read-only `xiao_state`.
  * v0.2: `xiao_update` under a state machine, a monotonic guard on immutable fields,
- *       logical deletion by tombstone, history reads. See ROADMAP.md.
+ *       logical deletion by tombstone, history reads.
+ * v0.3: lazy simulated life (`xiao_life`), freeze-on-speak, derived tone.
+ * v0.4: read-only settings page over GET /xiao/state, and `xiao_export`. See ROADMAP.md.
  */
 
 import {
@@ -365,7 +367,102 @@ export function apply(ctx, config) {
     },
   });
 
+  const snapshotOf = (view) => {
+    if (!view) return { ready: false };
+    const facts = [...state.domain.table('facts').entries()].map(([, record]) => record).sort(compareSeq);
+    return {
+      ready: true,
+      instanceId: view.instanceId,
+      identity: {
+        name: '晓',
+        gender: view.gender === 'female' ? '女性' : '男性',
+        age: view.age,
+        job: view.job,
+        jobCategory: view.jobCategory,
+      },
+      traits: {
+        outlook: view.outlook,
+        curiosity: view.curiosity,
+        speech: view.speech,
+        hobby: view.hobby,
+        quirk: view.quirk,
+      },
+      tone: view.tone,
+      recent: view.recent,
+      card: renderCard(view, cfg),
+      factsCount: view.factCount,
+      facts,
+    };
+  };
+
+  // Read-only feed for the settings page: loopback-only, GET-only, no writes.
+  const webServer = ctx.get('webServer');
+  if (webServer && typeof webServer.register === 'function') {
+    ctx.effect(() =>
+      webServer.register({
+        kind: 'exact',
+        path: '/xiao/state',
+        handler: (req, res) => {
+          if (String(req.method ?? 'GET').toUpperCase() !== 'GET') {
+            res.statusCode = 405;
+            res.setHeader('content-type', 'text/plain; charset=utf-8');
+            res.end('method not allowed');
+            return;
+          }
+          let body;
+          try {
+            body = JSON.stringify(snapshotOf(state.ready ? refresh() : null));
+          } catch (error) {
+            res.statusCode = 500;
+            res.setHeader('content-type', 'text/plain; charset=utf-8');
+            res.end(String(error?.message ?? error));
+            return;
+          }
+          res.statusCode = 200;
+          res.setHeader('content-type', 'application/json; charset=utf-8');
+          res.setHeader('cache-control', 'no-store');
+          res.end(body);
+        },
+      }),
+    );
+    log('info', 'serving GET /xiao/state for the settings page');
+  }
+
+  ctx.tools.register({
+    name: 'xiao_export',
+    description:
+      'Export the append-only fact log as JSONL for offline analysis: same-seed reproducibility (H2a) and stability-versus-legal-evolution (H3). Returns the text; write it to a file yourself, and do not edit it.',
+    parameters: {
+      type: 'object',
+      properties: {
+        maxFacts: { type: 'number', description: 'Keep at most this many of the newest facts (default 500).' },
+      },
+      additionalProperties: false,
+    },
+    output: {
+      schema: { type: 'object', additionalProperties: true },
+      render: (args, value) => [{ type: 'text', text: '```json\n' + JSON.stringify(value, null, 2) + '\n```' }],
+    },
+    async execute(args) {
+      if (!state.ready) return { ready: false, reason: state.failure ?? 'still opening storage' };
+      const input = isPlainObject(args) ? args : {};
+      const max = Number.isFinite(input.maxFacts) ? Math.max(1, Math.floor(input.maxFacts)) : 500;
+      const all = [...state.domain.table('facts').entries()].map(([, record]) => record).sort(compareSeq);
+      const kept = all.slice(Math.max(0, all.length - max));
+      const content = kept.map((record) => JSON.stringify(record)).join('\n');
+      return {
+        format: 'jsonl',
+        rulesVersion: RULES_VERSION,
+        total: all.length,
+        facts: kept.length,
+        truncated: kept.length < all.length,
+        bytes: Buffer.byteLength(content, 'utf8'),
+        content,
+      };
+    },
+  });
+
   log('info', 'mounted');
 }
 
-export const inject = ['storageDomain', 'systemPrompt', 'tools'];
+export const inject = ['storageDomain', 'systemPrompt', 'tools', 'webServer'];

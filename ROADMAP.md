@@ -271,6 +271,23 @@ M0 骨架 ──> M1 边界 ──> M2 生活 ──> M3 可见 ──> M4 冻�
 4. **`tone` 不进 fact**，由已固化事件的最近一条算出；没有事件时是"平静"。因此它只在固化新事件时变化，卡片的稳定前缀不受日常对话影响。
 5. 已知局限：调小 `lifeEventsPerWeek` 会让未固化事件整批改变（它们本来就只是"可能发生"），已固化的不受影响。
 
+### v0.4 可见与可导出（2026-10-27）
+
+已交付：`xiao_export`（Host，已验）、`GET /xiao/state` 只读路由（已验）、`settings.section` 页面（Host 侧就绪，客户端待页面重载后确认）。`package.json` 增加 `dsh.client` 与 `./client` 导出，版本 0.4.0。
+
+| 路线图验收 | 结果 | 证据 |
+|---|---|---|
+| 导出可供离线计算 | 通过 | `xiao_export` 返回 8 条事实、1762 字节 JSONL，字段齐全（seq/at/kind/data/source/evidence） |
+| 页面数据与工具一致 | Host 侧通过 | `GET /xiao/state` → `ready=true`、男性/22/还在读书、`tone=松下来`、8 条事实，与 `xiao_state` 完全一致 |
+| 只读 | 通过 | 同一路径 POST 返回 405 |
+| 页面出现在设置里 | **待页面重载** | 客户端清单在上一次启动时构图，新加的 `dsh.client` 要刷新/重启才会被浏览器加载 |
+
+偏离与修正：
+
+1. **`inject` 不能用对象形式**。写成 `{ required: [...], optional: [...] }` 时本版 Cordis 把键名当服务名，插件直接 `pending (waiting for services: required, optional)`。改回数组形式，`webServer` 列为必需。
+2. **`xiao_export` 不自己写盘**：返回文本由 agent 写入工作区。插件绕过文件策略直接写盘的风险不值得冒。
+3. **迁移演练推迟到 v1.0**：没有安全的离线 domain 环境，改 live 存储文件的收益小于风险。
+
 ## 附录 A：与 `晓v3.0.md` 的偏离
 
 | 论文机制 | 本插件 | 处置理由 |
