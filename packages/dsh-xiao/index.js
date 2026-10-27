@@ -5,10 +5,23 @@
  * pure fold of it (see `persona.js`). Nothing derivable from the seed is stored, so a
  * fact record only ever marks a deliberate deviation.
  *
- * v0.1 scope: birth, persona card injection, read-only `xiao_state`. See ROADMAP.md.
+ * v0.1: birth, persona card injection, read-only `xiao_state`.
+ * v0.2: `xiao_update` under a state machine, a monotonic guard on immutable fields,
+ *       logical deletion by tombstone, history reads. See ROADMAP.md.
  */
 
-import { SPEC, RULES_VERSION, compareSeq, fold, isPlainObject, renderCard } from './persona.js';
+import {
+  AGE_MAX,
+  AGE_MIN,
+  JOB_CATEGORIES,
+  SPEC,
+  RULES_VERSION,
+  compareSeq,
+  fold,
+  isPlainObject,
+  planUpdate,
+  renderCard,
+} from './persona.js';
 
 const DEFAULTS = {
   /** Persona card character budget. 0 disables injection (useful as a control group). */
@@ -123,6 +136,45 @@ export function apply(ctx, config) {
     if (session && typeof session.id === 'string') sessions.delete(session.id);
   });
 
+  /**
+   * Record a refused mutation in the fact log. Synchronous callers (the guard) queue
+   * it on a microtask; a refusal that cannot be recorded is reported, not swallowed.
+   */
+  const recordRejection = (entry) => {
+    if (!state.domain) return;
+    queueMicrotask(() => {
+      writeFact('rejected', entry, 'guard', 'confirmed').catch((error) => {
+        log('warn', `could not record a rejection: ${error?.message ?? error}`);
+      });
+    });
+  };
+
+  // Monotonic guard: immutable fields never pass, regardless of caller order. The
+  // state-dependent rules (job transitions, seq existence) live in `xiao_update`, which
+  // can refuse with a reason and record it.
+  ctx.tools.guard((execution) => {
+    if (execution.name !== 'xiao_update') return undefined;
+    const args = isPlainObject(execution.arguments) ? execution.arguments : {};
+    const action = String(args.action ?? '');
+    const deny = (code, reason) => {
+      recordRejection({ tool: 'xiao_update', action, code, reason });
+      return reason;
+    };
+    if (action === 'set_gender' || 'gender' in args || 'genderWord' in args) {
+      return deny('immutable_field', '性别是不可变字段，任何情况下都不能修改');
+    }
+    if (action === 'set_age') {
+      if (args.confirmed !== true) {
+        return deny('needs_confirmation', '改年龄必须先得到用户明确确认：先问用户，确认后再带 confirmed: true 调用');
+      }
+      const age = Number(args.age);
+      if (!Number.isInteger(age) || age < AGE_MIN || age > AGE_MAX) {
+        return deny('age_out_of_range', `年龄必须是 ${AGE_MIN}–${AGE_MAX} 的整数，收到 ${String(args.age)}`);
+      }
+    }
+    return undefined;
+  });
+
   ctx.systemPrompt.context({
     name: 'xiao.persona',
     order: 900,
@@ -136,6 +188,66 @@ export function apply(ctx, config) {
         if (!cfg.enabledForPresets.includes(preset)) return '';
       }
       return renderCard(state.view, cfg);
+    },
+  });
+
+  ctx.tools.register({
+    name: 'xiao_update',
+    description:
+      "Change Xiao's persisted state, one deliberate fact at a time. Hard rules: gender is immutable and can never be set; set_age requires explicit user confirmation (ask the user first, then retry with confirmed: true); a job change must follow the state machine (student -> job_seeking -> employed | unemployed -> retired, and retired only from 55+); remember stores a fact the user actually stated; forget tombstones one fact by seq (never the birth fact). Never invent a fact the user did not state, and never change state to win an argument.",
+    parameters: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['set_job', 'remember', 'forget', 'set_age'],
+          description: 'Which mutation to apply.',
+        },
+        job: { type: 'string', description: 'For set_job: the job label, e.g. 在书店做店员.' },
+        category: {
+          type: 'string',
+          enum: JOB_CATEGORIES,
+          description: 'For set_job: the target state-machine category.',
+        },
+        text: { type: 'string', description: 'For remember: the fact the user stated, verbatim in spirit, at most 200 characters.' },
+        seq: { type: 'number', description: 'For forget: the seq of the fact to tombstone.' },
+        age: { type: 'number', description: 'For set_age: the new age, an integer inside the configured range.' },
+        confirmed: { type: 'boolean', description: 'For set_age: true only after the user explicitly confirmed the change.' },
+      },
+      required: ['action'],
+      additionalProperties: false,
+    },
+    output: {
+      schema: { type: 'object', additionalProperties: true },
+      render: (args, value) => [{ type: 'text', text: '```json\n' + JSON.stringify(value, null, 2) + '\n```' }],
+    },
+    async execute(args) {
+      if (!state.ready) {
+        return { applied: false, code: 'not_ready', reason: state.failure ?? 'still opening storage' };
+      }
+      const input = isPlainObject(args) ? args : {};
+      const view = refresh();
+      if (!view) return { applied: false, code: 'no_birth', reason: '实例还没有诞生，先正常对话一次' };
+      const records = [...state.domain.table('facts').entries()].map(([, record]) => record);
+      const planned = planUpdate(input, view, records);
+      if (!planned.ok) {
+        await writeFact(
+          'rejected',
+          { tool: 'xiao_update', action: String(input.action ?? ''), code: planned.code, reason: planned.reason },
+          'model',
+          'confirmed',
+        );
+        return { applied: false, code: planned.code, reason: planned.reason };
+      }
+      const record = await writeFact(planned.kind, planned.data, planned.source, 'confirmed');
+      const after = refresh();
+      return {
+        applied: true,
+        kind: planned.kind,
+        seq: record.seq,
+        state: { age: after.age, job: after.job, jobCategory: after.jobCategory },
+        card: renderCard(after, cfg),
+      };
     },
   });
 
@@ -173,6 +285,7 @@ export function apply(ctx, config) {
           gender: view.gender === 'female' ? '女性' : '男性',
           age: view.age,
           job: view.job,
+          jobCategory: view.jobCategory,
         },
         traits: {
           outlook: view.outlook,

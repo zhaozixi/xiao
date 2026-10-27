@@ -10,10 +10,12 @@
 /** Storage unit names must match /^[a-z][a-z0-9_]*$/ — no hyphens. */
 export const DOMAIN_NAME = 'dsh_xiao';
 export const RULES_VERSION = 1;
-export const FACT_KINDS = ['birth', 'override', 'job', 'health', 'user_fact', 'event', 'tombstone'];
+export const FACT_KINDS = ['birth', 'override', 'job', 'health', 'user_fact', 'event', 'tombstone', 'rejected'];
 
 const AGE_MIN = 18;
 const AGE_MAX = 60;
+
+export { AGE_MIN, AGE_MAX };
 
 // ---------------------------------------------------------------------------
 // Deterministic randomness
@@ -67,16 +69,25 @@ const QUIRKS = [
   '习惯把要做的事写在纸上',
   '不太会用感叹号',
 ];
-const JOBS_YOUNG = ['还在读书', '刚毕业，在做一份实习', '在便利店做兼职'];
-const JOBS_MID = [
-  '在一家小公司做产品',
-  '在一家外包公司写前端',
-  '在书店做店员',
-  '在社区医院做行政',
-  '在做自由插画',
-  '在物流公司做调度',
+/** Job pools, each label tagged with the state-machine category it belongs to. */
+const JOBS_YOUNG = [
+  { job: '还在读书', category: 'student' },
+  { job: '刚毕业，在做一份实习', category: 'employed' },
+  { job: '在便利店做兼职', category: 'employed' },
 ];
-const JOBS_LATE = ['在一家小公司做财务', '自己开了间小店', '在做行政，快退休了'];
+const JOBS_MID = [
+  { job: '在一家小公司做产品', category: 'employed' },
+  { job: '在一家外包公司写前端', category: 'employed' },
+  { job: '在书店做店员', category: 'employed' },
+  { job: '在社区医院做行政', category: 'employed' },
+  { job: '在做自由插画', category: 'employed' },
+  { job: '在物流公司做调度', category: 'employed' },
+];
+const JOBS_LATE = [
+  { job: '在一家小公司做财务', category: 'employed' },
+  { job: '自己开了间小店', category: 'employed' },
+  { job: '在做行政，快退休了', category: 'employed' },
+];
 
 /**
  * Derive every identity field from a seed. Pure: same seed, same character.
@@ -93,8 +104,129 @@ export function derivePersona(seed) {
   const hobby = pick(rnd, HOBBIES);
   const quirk = pick(rnd, QUIRKS);
   const jobPool = age < 23 ? JOBS_YOUNG : age < 50 ? JOBS_MID : JOBS_LATE;
-  const job = pick(rnd, jobPool);
-  return { gender: gender.key, genderWord: gender.word, age, job, outlook, curiosity, speech, hobby, quirk };
+  const chosen = pick(rnd, jobPool);
+  return {
+    gender: gender.key,
+    genderWord: gender.word,
+    age,
+    job: chosen.job,
+    jobCategory: chosen.category,
+    outlook,
+    curiosity,
+    speech,
+    hobby,
+    quirk,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Job state machine (v0.2)
+// ---------------------------------------------------------------------------
+
+export const JOB_CATEGORIES = ['student', 'job_seeking', 'employed', 'unemployed', 'retired'];
+
+/** Allowed transitions. `retired` is terminal. */
+const JOB_TRANSITIONS = {
+  student: ['job_seeking'],
+  job_seeking: ['employed', 'unemployed'],
+  employed: ['job_seeking', 'unemployed'],
+  unemployed: ['job_seeking', 'retired'],
+  retired: [],
+};
+
+/** Minimum age at which `retired` is reachable; the adult default range is 18–60. */
+const RETIRE_AGE = 55;
+
+/**
+ * Validate one job transition against the state machine.
+ * @param {string} from - current category.
+ * @param {string} to - requested category.
+ * @param {number} age - current (derived) age.
+ * @returns {{ok: true} | {ok: false, code: string, reason: string}} decision.
+ */
+export function canTransitionJob(from, to, age) {
+  if (!JOB_CATEGORIES.includes(from)) {
+    return { ok: false, code: 'unknown_job_category', reason: `当前职业类别未知：${from}` };
+  }
+  if (!JOB_CATEGORIES.includes(to)) {
+    return { ok: false, code: 'unknown_job_category', reason: `目标类别未知：${to}；可选：${JOB_CATEGORIES.join(', ')}` };
+  }
+  if (to === 'retired' && Number(age) < RETIRE_AGE) {
+    return { ok: false, code: 'retire_too_young', reason: `退休需要年龄 ≥ ${RETIRE_AGE}，当前 ${age} 岁` };
+  }
+  if (!JOB_TRANSITIONS[from].includes(to)) {
+    const allowed = JOB_TRANSITIONS[from];
+    return {
+      ok: false,
+      code: 'illegal_job_transition',
+      reason: `不允许 ${from} → ${to}；${allowed.length > 0 ? `允许：${allowed.join(', ')}` : '当前状态不可转移'}`,
+    };
+  }
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Update planning: turn a requested mutation into a fact, or into a refusal
+// ---------------------------------------------------------------------------
+
+/**
+ * Decide what one `xiao_update` call would write. Pure: no I/O, no clock.
+ * The guard layer (`index.js`) independently refuses immutable-field shapes, so a
+ * refusal here is about state, not about shape.
+ * @param {unknown} input - tool arguments.
+ * @param {object} view - folded character view.
+ * @param {Iterable} records - the whole fact log, for `forget`.
+ * @returns {object} `{ ok: true, kind, data, source, note? }` or `{ ok: false, code, reason }`.
+ */
+export function planUpdate(input, view, records = []) {
+  const args = isPlainObject(input) ? input : {};
+  const action = String(args.action ?? '');
+
+  if (action === 'set_job') {
+    const job = typeof args.job === 'string' ? args.job.trim() : '';
+    const category = String(args.category ?? '');
+    if (job.length === 0) return { ok: false, code: 'missing_job', reason: 'job 不能为空' };
+    if (job.length > 40) return { ok: false, code: 'job_too_long', reason: 'job 超过 40 字' };
+    const check = canTransitionJob(view.jobCategory, category, view.age);
+    if (!check.ok) return check;
+    return { ok: true, kind: 'job', data: { job, category }, source: 'model' };
+  }
+
+  if (action === 'remember') {
+    const text = typeof args.text === 'string' ? args.text.trim() : '';
+    if (text.length === 0) return { ok: false, code: 'missing_text', reason: 'text 不能为空' };
+    if (text.length > 200) return { ok: false, code: 'text_too_long', reason: 'text 超过 200 字' };
+    return { ok: true, kind: 'user_fact', data: { text }, source: 'user' };
+  }
+
+  if (action === 'forget') {
+    const seq = Number(args.seq);
+    if (!Number.isFinite(seq)) return { ok: false, code: 'missing_seq', reason: 'seq 必须是数字' };
+    const all = [...records].filter(isFactRecord);
+    const target = all.find((fact) => fact.seq === seq);
+    if (!target) return { ok: false, code: 'unknown_fact', reason: `没有 seq=${seq} 的事实` };
+    if (target.kind === 'birth') return { ok: false, code: 'cannot_forget_birth', reason: '出生事实不能删除；要重来请重置实例' };
+    const already = all.some((fact) => fact.kind === 'tombstone' && fact.data.targetSeq === seq);
+    if (already) return { ok: false, code: 'already_forgotten', reason: `seq=${seq} 已被删除` };
+    return { ok: true, kind: 'tombstone', data: { targetSeq: seq }, source: 'user' };
+  }
+
+  if (action === 'set_age') {
+    if (args.confirmed !== true) {
+      return {
+        ok: false,
+        code: 'needs_confirmation',
+        reason: '改年龄必须先得到用户明确确认；先问用户，确认后再带 confirmed: true 调用',
+      };
+    }
+    const age = Number(args.age);
+    if (!Number.isInteger(age) || age < AGE_MIN || age > AGE_MAX) {
+      return { ok: false, code: 'age_out_of_range', reason: `年龄必须是 ${AGE_MIN}–${AGE_MAX} 的整数` };
+    }
+    return { ok: true, kind: 'override', data: { field: 'age', value: age }, source: 'user' };
+  }
+
+  return { ok: false, code: 'unknown_action', reason: `未知 action：${action || '(空)'}；可选 set_job / remember / forget / set_age` };
 }
 
 /**
@@ -207,12 +339,14 @@ export function fold(records, cfg, now) {
   const notes = [];
   const events = [];
   let job = base.job;
+  let jobCategory = base.jobCategory;
 
   for (const fact of facts) {
     if (fact.kind === 'override') {
       overrides.set(fact.data.field, fact.data.value);
     } else if (fact.kind === 'job') {
       if (typeof fact.data.job === 'string' && fact.data.job.length > 0) job = fact.data.job;
+      if (JOB_CATEGORIES.includes(fact.data.category)) jobCategory = fact.data.category;
     } else if (fact.kind === 'event') {
       events.push({ at: fact.at, text: String(fact.data.text ?? '') });
     } else if (fact.kind === 'user_fact' || fact.kind === 'health') {
@@ -233,6 +367,7 @@ export function fold(records, cfg, now) {
     genderWord: base.genderWord,
     age: overrides.has('age') ? Number(overrides.get('age')) : aged,
     job: overrides.has('job') ? String(overrides.get('job')) : job,
+    jobCategory,
     outlook: base.outlook,
     curiosity: base.curiosity,
     speech: base.speech,

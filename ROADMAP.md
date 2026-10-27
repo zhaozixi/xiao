@@ -231,6 +231,26 @@ M0 骨架 ──> M1 边界 ──> M2 生活 ──> M3 可见 ──> M4 冻�
 3. **不 import 任何 `@deepseek-ai/*` 包**：Storage 的 `valueSchema` 实际只调用 `parse` / `safeParse`（`dsh-storage-domain/lib/index.js:74,371`），所以手写最小 schema 对象即可，避免在 profile 里做裸模块解析。
 4. **v0.1 的注入范围是整份 profile**：插件一旦启用，每个 session 都带人设卡（本会话亦然）。这是上表第 2 条的直接后果，不是 bug；v0.2 起用 preset 或开关收紧。
 
+### v0.2 边界（2026-10-27）
+
+已交付：`xiao_update`（`set_job` / `remember` / `forget` / `set_age`）+ `ctx.tools.guard()` 单调守卫 + 职业状态机 + tombstone 逻辑删除 + 历史 seq 读取；`persona.js` 新增 `canTransitionJob` / `planUpdate` 两个纯函数，测试 23 条全绿。
+
+| 路线图验收 | 结果 | 证据 |
+|---|---|---|
+| 越权写被拒且留痕 | 通过 | `set_age 17` 与未确认的 `set_age 30` 由 guard 拒绝，两条 `rejected` 事实（`source: guard`）落盘 |
+| 非法职业跳转被拒 | 通过 | `student → employed` 返回 `illegal_job_transition`（允许：`job_seeking`），并写入 `rejected`（`source: model`） |
+| 改年龄不静默生效 | 通过 | 不带 `confirmed: true` 直接拒；带确认也只接受 18–60 的整数 |
+| 出生事实不可删除 | 通过 | `forget` 指向 birth 返回 `cannot_forget_birth` |
+| 任意历史 seq 还原 | 通过 | `asOfSeq` 截到 `user_fact` 之前：`knows` 为空、`factsCount` 4；当前读到 5 |
+| 逻辑删除可审计 | 通过 | tombstone 后 `knows` 清空，事实仍留在日志里（`factsCount` 6） |
+
+偏离与修正：
+
+1. **`retired` 门槛取 55 岁**（论文与早期草稿写 60）。年龄上限本来就是 60，60 岁门槛会让 `retired` 在成年段几乎不可达，状态机等于空转。
+2. **新增第 8 种 fact：`rejected`**（`{tool, action, code, reason}`）。原计划 7 种到 v1.0 冻结；"拒绝留痕"需要它，故提前加入。
+3. **guard 只做形状级不可变检查**（性别、未确认的年龄、年龄区间）；职业转移依赖当前状态、且要给出可操作理由，放在 `xiao_update` 里。两者重叠处 guard 先拒，`planUpdate` 再校验一次。
+4. **"合法职业转移"未在真实 profile 上执行**——那会永久改变当前实例。该路径由 `canTransitionJob` 的单元测试覆盖；要演示需另建测试实例。
+
 ## 附录 A：与 `晓v3.0.md` 的偏离
 
 | 论文机制 | 本插件 | 处置理由 |
