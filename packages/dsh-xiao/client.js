@@ -158,7 +158,7 @@ window.__ModuleLoader__.load({
     function row(key, label, value) {
       return h(
         'div',
-        { key, style: { display: 'flex', gap: 12, padding: '3px 0' } },
+        { key, style: { display: 'flex', gap: 12, padding: '2px 0' } },
         h('span', { style: { color: C.dim, minWidth: 64, fontSize: 13 } }, label),
         h('span', { style: { color: C.text, fontSize: 13 } }, value),
       );
@@ -170,7 +170,7 @@ window.__ModuleLoader__.load({
         {
           key,
           style: {
-            margin: '16px 0 4px',
+            margin: '12px 0 2px',
             fontSize: 12,
             fontWeight: 600,
             letterSpacing: '0.04em',
@@ -220,7 +220,7 @@ window.__ModuleLoader__.load({
       const facts = Array.isArray(value.facts) ? value.facts : [];
 
       const children = [
-        h('div', { key: 'subtitle', style: { color: C.dim, fontSize: 13, margin: '2px 0 6px' } }, dict.subtitle),
+        h('div', { key: 'subtitle', style: { color: C.dim, fontSize: 13, margin: '2px 0 4px' } }, dict.subtitle),
         heading('h-identity', dict.identity),
         row('gender', dict.fields.gender, identity.gender ?? '—'),
         row('age', dict.fields.age, String(identity.age ?? '—')),
@@ -241,12 +241,12 @@ window.__ModuleLoader__.load({
               background: 'var(--dsw-alias-bg-layer-1)',
               border: `1px solid ${C.line}`,
               borderRadius: 10,
-              padding: '12px 14px',
-              margin: '6px 0 4px',
+              padding: '10px 12px',
+              margin: '4px 0 2px',
               whiteSpace: 'pre-wrap',
               fontFamily: 'inherit',
               fontSize: 13,
-              lineHeight: 1.7,
+              lineHeight: 1.6,
               color: C.text,
             },
           },
@@ -302,7 +302,7 @@ window.__ModuleLoader__.load({
         children.push(h('ul', { key: 'facts', style: { listStyle: 'none', margin: 0, padding: 0 } }, items));
       }
 
-      children.push(h('div', { key: 'note', style: { color: C.dim, fontSize: 12, marginTop: 14 } }, dict.note));
+      children.push(h('div', { key: 'note', style: { color: C.dim, fontSize: 12, marginTop: 10 } }, dict.note));
       return h('div', { key: 'body' }, children);
     }
 
@@ -319,7 +319,7 @@ window.__ModuleLoader__.load({
       }
       return h(
         'div',
-        { style: { padding: '4px 2px 24px', maxWidth: 720 } },
+        { style: { padding: '2px 2px 16px', maxWidth: 720 } },
         h('div', { style: { fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 2 } }, '晓 · dsh-xiao'),
         content,
       );

@@ -1,0 +1,4 @@
+{"seq":1000,"at":1760000000000,"kind":"birth","data":{"instanceId":"fixture-instance","seed":"fixture-seed-1","birthAt":1760000000000,"rulesVersion":1},"source":"seed","evidence":"confirmed"}
+{"seq":2000,"at":1760000100000,"kind":"job","data":{"job":"在书店做店员","category":"employed"},"source":"model","evidence":"confirmed"}
+{"seq":3000,"at":1760000200000,"kind":"event","data":{"id":"20750.0","day":20750,"kind":"rest","text":"课少，回宿舍补了个觉"},"source":"sim","evidence":"confirmed"}
+{"seq":4000,"at":1760000300000,"kind":"rejected","data":{"tool":"xiao_update","action":"set_age","code":"age_out_of_range","reason":"年龄必须是 18–60 的整数，收到 17"},"source":"guard","evidence":"confirmed"}
