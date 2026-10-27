@@ -119,9 +119,10 @@ window.__ModuleLoader__.load({
       const [state, setState] = React.useState({ status: 'loading' });
       React.useEffect(() => {
         let alive = true;
-        // Mount beacon: a distinct query so the request shows up even if rendering fails.
-        fetch(`${url}?ping=mount`, { headers: { accept: 'application/json' } }).catch(() => {});
-        fetch(url, { headers: { accept: 'application/json' } })
+        // Diagnostic marker: the host counts page-originated requests with it.
+        const headers = { accept: 'application/json', 'x-xiao-client': 'settings' };
+        fetch(`${url}?ping=mount`, { headers }).catch(() => {});
+        fetch(url, { headers })
           .then((response) => (response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`))))
           .then((value) => {
             if (alive) setState({ status: 'ready', value });

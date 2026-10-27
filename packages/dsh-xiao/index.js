@@ -400,11 +400,12 @@ export function apply(ctx, config) {
   //
   // Known limitation: this route is NOT behind the app's connection token (the shell
   // answers 401 for `/` while this one answers 200), because the token mechanism lives
-  // in the connection service rather than the web server. Loopback-only exposure of
-  // read-only persona data is therefore the current posture; `pageRequests` counts it so
-  // the owner can see it. Moving the feed onto the authenticated Remote channel is a
-  // v1.0 task.
-  const pageHits = { sameOrigin: 0, direct: 0, rejected: 0 };
+  // in the connection service rather than the web server. The page is loaded from the
+  // `dsh-app://` scheme and reaches this route cross-origin, so `Sec-Fetch-Site` is not
+  // a usable discriminator either — the page marks its own requests with a header
+  // instead, purely as a diagnostic. Moving the feed onto the authenticated Remote
+  // channel is a v1.0 task.
+  const pageHits = { total: 0, page: 0, rejected: 0 };
   const webServer = ctx.get('webServer');
   if (webServer && typeof webServer.register === 'function') {
     ctx.effect(() =>
@@ -418,16 +419,15 @@ export function apply(ctx, config) {
             res.end('method not allowed');
             return;
           }
-          const site = String(req.headers?.['sec-fetch-site'] ?? '');
-          if (site === 'cross-site') {
+          if (String(req.headers?.['sec-fetch-site'] ?? '') === 'cross-site') {
             pageHits.rejected += 1;
             res.statusCode = 403;
             res.setHeader('content-type', 'text/plain; charset=utf-8');
             res.end('cross-site requests are not served');
             return;
           }
-          if (site === 'same-origin' || site === 'same-site') pageHits.sameOrigin += 1;
-          else pageHits.direct += 1;
+          pageHits.total += 1;
+          if (req.headers?.['x-xiao-client'] === 'settings') pageHits.page += 1;
           let body;
           try {
             body = JSON.stringify(snapshotOf(state.ready ? refresh() : null));

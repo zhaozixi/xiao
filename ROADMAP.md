@@ -273,22 +273,25 @@ M0 骨架 ──> M1 边界 ──> M2 生活 ──> M3 可见 ──> M4 冻�
 
 ### v0.4 可见与可导出（2026-10-27）
 
-已交付：`xiao_export`（Host，已验）、`GET /xiao/state` 只读路由（已验，含请求来源分类）、`settings.section` 页面（重启后已注册进设置面板）。`package.json` 增加 `dsh.client` 与 `./client` 导出，版本 0.4.0。**页面的实际渲染未验证**——没有浏览器控制，只验证到"槽位里有这个条目且数据可取"。
+已交付：`xiao_export`（Host）、`GET /xiao/state` 只读路由、`settings.section` 页面。`package.json` 增加 `dsh.client` 与 `./client` 导出，版本 0.4.0。**页面已渲染**（用户截图确认）。
 
 | 路线图验收 | 结果 | 证据 |
 |---|---|---|
 | 导出可供离线计算 | 通过 | `xiao_export` 返回 8 条事实、1762 字节 JSONL，字段齐全（seq/at/kind/data/source/evidence） |
-| 页面数据与工具一致 | Host 侧通过 | `GET /xiao/state` → `ready=true`、男性/22/还在读书、`tone=松下来`、8 条事实，与 `xiao_state` 完全一致 |
+| 页面数据与工具一致 | 通过 | 截图中的身份、性格、人设卡、8 条时间线与 `xiao_state` 完全一致 |
 | 只读 | 通过 | 同一路径 POST 返回 405 |
-| 页面出现在设置里 | 通过 | 重启后 `settings.section` 的 occupants 出现 `xiao`（order 25，active） |
-| 页面能取到数据 | 通过（可观测） | 路由按 `Sec-Fetch-Site` 分类计数：直连记为 `direct`、同源记为 `sameOrigin`、跨站返回 403。页面是否真的渲染未验证（无浏览器控制） |
+| 页面出现在设置里 | 通过 | `settings.section` 的 occupants 出现 `xiao`（order 25，active），导航排在 Agent 预设之后 |
+| 页面渲染 | 通过 | 身份/状态/性格五行/人设卡/事实时间线；事件行带「模拟」角标；底部有只读提示 |
+| 页面取数与计数 | 通过 | `pageRequests` 的 `total/page` 计数：直连只增 `total`，带页面标记头的请求同时增 `page` |
 
 偏离与修正：
 
 1. **`inject` 不能用对象形式**。写成 `{ required: [...], optional: [...] }` 时本版 Cordis 把键名当服务名，插件直接 `pending (waiting for services: required, optional)`。改回数组形式，`webServer` 列为必需。
 2. **`xiao_export` 不自己写盘**：返回文本由 agent 写入工作区。插件绕过文件策略直接写盘的风险不值得冒。
 3. **迁移演练推迟到 v1.0**：没有安全的离线 domain 环境，改 live 存储文件的收益小于风险。
-4. **`/xiao/state` 没有接入连接令牌**。壳层对 `/` 返回 401，对这个路由返回 200——令牌机制在 connection 服务里，不在 webServer 里。当前姿态是"仅回环、只读、可计数"：跨站请求 403，非浏览器直连记入 `pageRequests.direct`。真正的修法是把页面数据挪到鉴权的 Remote 通道，列为 v1.0 任务。
+4. **Client 侧 Service 必须显式 inject**。`ctx.locale` 在未声明的模块里访问会直接抛 `cannot get property "locale" without inject`；而且访问语句本身要放进 `try`（我第一版把 `try` 写在它下一行，于是白屏）。
+5. **页面并不与 Host 同源**。页面跑在 `dsh-app://` 下、跨源请求 `http://127.0.0.1:<port>/xiao/state`，靠 Electron 的宽松策略才通得过；因此 `Sec-Fetch-Site` 不是可用判据（实测页面的 6 次请求全被记成 `direct`）。改用页面自带 `x-xiao-client: settings` 头做诊断计数，跨站 403 仍然保留。
+6. **`/xiao/state` 没有接入连接令牌**。壳层对 `/` 返回 401，对这个路由返回 200——令牌机制在 connection 服务里，不在 webServer 里。当前姿态是"仅回环、只读、可计数"。真正的修法是把页面数据挪到鉴权的 Remote 通道，列为 v1.0 任务。
 
 ## 附录 A：与 `晓v3.0.md` 的偏离
 
