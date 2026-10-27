@@ -262,6 +262,30 @@ export function renderCard(view, cfg) {
   return card.length > budget ? card.slice(0, budget) : card;
 }
 
+/**
+ * Render what the character remembers about the user. Kept separate from the persona
+ * card so the two budgets do not compete, and capped hard like the card.
+ * @param {object} view - folded character view.
+ * @param {{ userSummaryMaxChars?: number }} cfg - normalized config.
+ * @returns {string} the block, empty when there is nothing to remember or budget is 0.
+ */
+export function renderUserNotes(view, cfg) {
+  const budget = Number(cfg?.userSummaryMaxChars ?? 0);
+  if (!budget || budget <= 0) return '';
+  const notes = Array.isArray(view?.notes)
+    ? view.notes.filter((note) => typeof note === 'string' && note.trim().length > 0)
+    : [];
+  if (notes.length === 0) return '';
+  const lines = ['关于对方，你记得这些：'];
+  for (let index = notes.length - 1; index >= 0; index -= 1) {
+    const line = `- ${notes[index].trim()}`;
+    const next = [...lines, line].join('\n');
+    if (next.length > budget) break;
+    lines.push(line);
+  }
+  return lines.length > 1 ? lines.join('\n') : '';
+}
+
 // ---------------------------------------------------------------------------
 // Lazy simulated life (v0.3)
 // ---------------------------------------------------------------------------
@@ -326,6 +350,7 @@ const LIFE_TEMPLATES = {
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const MONTH_MS = 30 * DAY_MS;
 
 /**
  * Tone is a pure function of the committed events — never stored, so it can never
@@ -501,10 +526,16 @@ export function fold(records, cfg, now) {
   const events = [];
   let job = base.job;
   let jobCategory = base.jobCategory;
+  let ageCorrection;
 
   for (const fact of facts) {
     if (fact.kind === 'override') {
       overrides.set(fact.data.field, fact.data.value);
+      if (fact.data.field === 'age' && Number.isFinite(Number(fact.data.value))) {
+        // A correction is a new starting point, not a permanent freeze: aging continues
+        // from the moment the correction was made.
+        ageCorrection = { value: Number(fact.data.value), at: fact.at };
+      }
     } else if (fact.kind === 'job') {
       if (typeof fact.data.job === 'string' && fact.data.job.length > 0) job = fact.data.job;
       if (JOB_CATEGORIES.includes(fact.data.category)) jobCategory = fact.data.category;
@@ -521,9 +552,16 @@ export function fold(records, cfg, now) {
     }
   }
 
-  const months = Math.max(0, (now - birthAt) / (30 * 24 * 60 * 60 * 1000));
+  const months = Math.max(0, (now - birthAt) / MONTH_MS);
   const growth = clamp(Number(cfg?.growthPerMonth ?? 1 / 12), 1 / 12, 1 / 4);
   const aged = clamp(base.age + Math.floor(months * growth), AGE_MIN, AGE_MAX);
+  const age = ageCorrection
+    ? clamp(
+        Math.floor(ageCorrection.value + Math.max(0, (now - ageCorrection.at) / MONTH_MS) * growth),
+        AGE_MIN,
+        AGE_MAX,
+      )
+    : aged;
 
   return {
     instanceId: birth.data.instanceId,
@@ -532,7 +570,7 @@ export function fold(records, cfg, now) {
     rulesVersion: birth.data.rulesVersion,
     gender: base.gender,
     genderWord: base.genderWord,
-    age: overrides.has('age') ? Number(overrides.get('age')) : aged,
+    age,
     job: overrides.has('job') ? String(overrides.get('job')) : job,
     jobCategory,
     outlook: base.outlook,

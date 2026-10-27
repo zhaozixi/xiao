@@ -53,6 +53,7 @@ dsh --profile <name> ...   # 具体以 plugin_manager 返回为准
 | `growthPerMonth` | `1/12` | 年龄增速（岁/月），被夹到 `[1/12, 1/4]` |
 | `lifeEventsPerWeek` | `1` | 每周模拟事件数，`0–2`；`0` 关闭生活模拟 |
 | `announceOnFirstMeeting` | `true` | 新会话的第一条用户消息到达时，让晓用一两句话介绍自己；**只发生一次** |
+| `userSummaryMaxChars` | `200` | "关于对方，你记得这些"那一块的预算，独立于卡片；`0` 关闭 |
 
 > 要"只在名为 `xiao` 的 preset 里出现"，设 `enabledForPresets: ["xiao"]`。
 
@@ -70,6 +71,8 @@ dsh --profile <name> ...   # 具体以 plugin_manager 返回为准
 - **性别不可写**（`ctx.tools.guard()`，单调拦截，与调用顺序无关）；
 - **改年龄必须带 `confirmed: true`**，且必须是 18–60 的整数；
 - **职业转移必须符合状态机**：`student → job_seeking → employed | unemployed → retired`，`retired` 仅 55 岁以上可达，且不可逆。
+
+`remember` 写进去的事会以「关于对方，你记得这些」单独注入（见 §4 的 `userSummaryMaxChars`），`forget` 之后立刻消失。`set_age` 是一次**新的起点**，不是冻结：更正之后仍按 `growthPerMonth` 继续长。
 
 被拒绝的调用不会改变状态，但会写一条 `rejected` 事实留痕。
 

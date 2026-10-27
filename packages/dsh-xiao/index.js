@@ -26,6 +26,7 @@ import {
   isPlainObject,
   planUpdate,
   renderCard,
+  renderUserNotes,
 } from './persona.js';
 
 const DEFAULTS = {
@@ -41,6 +42,8 @@ const DEFAULTS = {
   lifeEventsPerWeek: 1,
   /** Let the character introduce herself once, on the next new session after birth. */
   announceOnFirstMeeting: true,
+  /** Character budget for the "what you remember about the user" block. 0 disables it. */
+  userSummaryMaxChars: 200,
 };
 
 /** Appended to the card exactly once, when the first user message of a fresh session arrives. */
@@ -58,6 +61,7 @@ function normalizeConfig(config) {
     if (Number.isFinite(config.growthPerMonth)) cfg.growthPerMonth = config.growthPerMonth;
     if (Number.isFinite(config.lifeEventsPerWeek)) cfg.lifeEventsPerWeek = config.lifeEventsPerWeek;
     if (typeof config.announceOnFirstMeeting === 'boolean') cfg.announceOnFirstMeeting = config.announceOnFirstMeeting;
+    if (Number.isFinite(config.userSummaryMaxChars)) cfg.userSummaryMaxChars = Math.max(0, Math.floor(config.userSummaryMaxChars));
   }
   return cfg;
 }
@@ -239,18 +243,24 @@ export function apply(ctx, config) {
     return undefined;
   });
 
+  /** Shared gate for every prompt contribution this plugin makes. */
+  const allowsInjection = (assembleContext) => {
+    if (!state.ready || !state.view) return false;
+    const sessionId = assembleContext?.scope?.id;
+    const header = sessionId ? sessions.get(sessionId) : undefined;
+    if (header && header.origin === 'subagent') return false;
+    if (header && cfg.enabledForPresets.length > 0) {
+      return cfg.enabledForPresets.includes(header.agentPreset ?? '');
+    }
+    return true;
+  };
+
   ctx.systemPrompt.context({
     name: 'xiao.persona',
     order: 900,
     text: (assembleContext) => {
-      if (!state.ready || !state.view) return '';
+      if (!allowsInjection(assembleContext)) return '';
       const sessionId = assembleContext?.scope?.id;
-      const header = sessionId ? sessions.get(sessionId) : undefined;
-      if (header && header.origin === 'subagent') return '';
-      if (header && cfg.enabledForPresets.length > 0) {
-        const preset = header.agentPreset ?? '';
-        if (!cfg.enabledForPresets.includes(preset)) return '';
-      }
       const card = renderCard(state.view, cfg);
       if (!card) return '';
       if (sessionId && introPending.has(sessionId) && !hasIntroduced()) {
@@ -260,6 +270,14 @@ export function apply(ctx, config) {
       }
       return card;
     },
+  });
+
+  // What she remembers about the user lives in its own budget (B_U), so remembering more
+  // never eats into the persona card.
+  ctx.systemPrompt.context({
+    name: 'xiao.user',
+    order: 901,
+    text: (assembleContext) => (allowsInjection(assembleContext) ? renderUserNotes(state.view, cfg) : ''),
   });
 
   ctx.tools.register({

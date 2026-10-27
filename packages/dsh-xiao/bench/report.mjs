@@ -22,6 +22,7 @@ import {
   fold,
   planUpdate,
   renderCard,
+  renderUserNotes,
 } from '../persona.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -184,6 +185,12 @@ function measureH3() {
   const corrupted = { ...birthFact('x'), data: {} };
   record('H3', '损坏的出生记录被跳过', fold([corrupted, birthFact('ok')], {}, BIRTH_AT)?.seed === 'ok');
 
+  // 9. remembered user facts must actually reach the prompt
+  const remembered = viewOf([base, noteFact]);
+  const block = renderUserNotes(remembered, { userSummaryMaxChars: 200 });
+  record('H3', '记住的用户事实进入提示词', block.includes('住在杭州'), `${block.length} 字符`);
+  record('H3', '忘记之后不再进入提示词', renderUserNotes(viewOf([base, noteFact, tombstone]), { userSummaryMaxChars: 200 }) === '');
+
   return {
     section: 'H3',
     detail: [
@@ -218,6 +225,19 @@ function measureH4() {
   const empty = renderCard(viewOf([birthFact('h4')]), { cardMaxChars: 0 }) === '';
   record('H4', 'cardMaxChars = 0 时不注入', empty);
 
+  // What the remembered block costs, with three notes at the default budget.
+  const notes = ['住在杭州', '晚上工作，白天睡觉', '不太喜欢甜食'];
+  const noteFacts = notes.map((text, index) => ({
+    seq: index + 2,
+    at: BIRTH_AT + index * 1_000,
+    kind: 'user_fact',
+    data: { text },
+    source: 'user',
+    evidence: 'confirmed',
+  }));
+  const notesBlock = renderUserNotes(viewOf([birthFact('h4'), ...noteFacts]), { userSummaryMaxChars: 200 });
+  record('H4', '记住三条事实的块在预算内', notesBlock.length <= 200, `${notesBlock.length} 字符`);
+
   return {
     section: 'H4',
     detail: [
@@ -227,6 +247,7 @@ function measureH4() {
       `| 无近期事件 | 中位 ${plain[Math.floor(plain.length / 2)]}，范围 ${plain[0]}–${plain[plain.length - 1]} |`,
       `| 有一条已固化事件 | 中位 ${withEvent[Math.floor(withEvent.length / 2)]}，范围 ${withEvent[0]}–${withEvent[withEvent.length - 1]} |`,
       `| 「最近：」尾巴的成本 | 约 ${withEvent[Math.floor(withEvent.length / 2)] - plain[Math.floor(plain.length / 2)]} 字符 |`,
+      `| 记住三条事实的块 | ${notesBlock.length} 字符（预算 200） |`,
       `| 卡片关闭时为空白 | ${empty ? '是' : '**否**'} |`,
       '',
       '> 这是成本侧近似，不是 H4 的结论。真正的 H4 需要在固定总 token 预算下比较"有摘要/等长结构化文本/直接注入全字段"三种条件的跨会话一致性。',
