@@ -273,20 +273,22 @@ M0 骨架 ──> M1 边界 ──> M2 生活 ──> M3 可见 ──> M4 冻�
 
 ### v0.4 可见与可导出（2026-10-27）
 
-已交付：`xiao_export`（Host，已验）、`GET /xiao/state` 只读路由（已验）、`settings.section` 页面（Host 侧就绪，客户端待页面重载后确认）。`package.json` 增加 `dsh.client` 与 `./client` 导出，版本 0.4.0。
+已交付：`xiao_export`（Host，已验）、`GET /xiao/state` 只读路由（已验，含请求来源分类）、`settings.section` 页面（重启后已注册进设置面板）。`package.json` 增加 `dsh.client` 与 `./client` 导出，版本 0.4.0。**页面的实际渲染未验证**——没有浏览器控制，只验证到"槽位里有这个条目且数据可取"。
 
 | 路线图验收 | 结果 | 证据 |
 |---|---|---|
 | 导出可供离线计算 | 通过 | `xiao_export` 返回 8 条事实、1762 字节 JSONL，字段齐全（seq/at/kind/data/source/evidence） |
 | 页面数据与工具一致 | Host 侧通过 | `GET /xiao/state` → `ready=true`、男性/22/还在读书、`tone=松下来`、8 条事实，与 `xiao_state` 完全一致 |
 | 只读 | 通过 | 同一路径 POST 返回 405 |
-| 页面出现在设置里 | **待页面重载** | 客户端清单在上一次启动时构图，新加的 `dsh.client` 要刷新/重启才会被浏览器加载 |
+| 页面出现在设置里 | 通过 | 重启后 `settings.section` 的 occupants 出现 `xiao`（order 25，active） |
+| 页面能取到数据 | 通过（可观测） | 路由按 `Sec-Fetch-Site` 分类计数：直连记为 `direct`、同源记为 `sameOrigin`、跨站返回 403。页面是否真的渲染未验证（无浏览器控制） |
 
 偏离与修正：
 
 1. **`inject` 不能用对象形式**。写成 `{ required: [...], optional: [...] }` 时本版 Cordis 把键名当服务名，插件直接 `pending (waiting for services: required, optional)`。改回数组形式，`webServer` 列为必需。
 2. **`xiao_export` 不自己写盘**：返回文本由 agent 写入工作区。插件绕过文件策略直接写盘的风险不值得冒。
 3. **迁移演练推迟到 v1.0**：没有安全的离线 domain 环境，改 live 存储文件的收益小于风险。
+4. **`/xiao/state` 没有接入连接令牌**。壳层对 `/` 返回 401，对这个路由返回 200——令牌机制在 connection 服务里，不在 webServer 里。当前姿态是"仅回环、只读、可计数"：跨站请求 403，非浏览器直连记入 `pageRequests.direct`。真正的修法是把页面数据挪到鉴权的 Remote 通道，列为 v1.0 任务。
 
 ## 附录 A：与 `晓v3.0.md` 的偏离
 

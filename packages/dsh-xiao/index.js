@@ -392,10 +392,19 @@ export function apply(ctx, config) {
       card: renderCard(view, cfg),
       factsCount: view.factCount,
       facts,
+      pageRequests: { ...pageHits },
     };
   };
 
-  // Read-only feed for the settings page: loopback-only, GET-only, no writes.
+  // Read-only feed for the settings page: GET-only, no writes.
+  //
+  // Known limitation: this route is NOT behind the app's connection token (the shell
+  // answers 401 for `/` while this one answers 200), because the token mechanism lives
+  // in the connection service rather than the web server. Loopback-only exposure of
+  // read-only persona data is therefore the current posture; `pageRequests` counts it so
+  // the owner can see it. Moving the feed onto the authenticated Remote channel is a
+  // v1.0 task.
+  const pageHits = { sameOrigin: 0, direct: 0, rejected: 0 };
   const webServer = ctx.get('webServer');
   if (webServer && typeof webServer.register === 'function') {
     ctx.effect(() =>
@@ -409,6 +418,16 @@ export function apply(ctx, config) {
             res.end('method not allowed');
             return;
           }
+          const site = String(req.headers?.['sec-fetch-site'] ?? '');
+          if (site === 'cross-site') {
+            pageHits.rejected += 1;
+            res.statusCode = 403;
+            res.setHeader('content-type', 'text/plain; charset=utf-8');
+            res.end('cross-site requests are not served');
+            return;
+          }
+          if (site === 'same-origin' || site === 'same-site') pageHits.sameOrigin += 1;
+          else pageHits.direct += 1;
           let body;
           try {
             body = JSON.stringify(snapshotOf(state.ready ? refresh() : null));
