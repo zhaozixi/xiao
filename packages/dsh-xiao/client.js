@@ -104,9 +104,9 @@ window.__ModuleLoader__.load({
     function useLang(ctx) {
       const [lang, setLang] = React.useState(() => activeLang(ctx));
       React.useEffect(() => {
-        const subscribe = ctx?.locale?.subscribe;
-        if (typeof subscribe !== 'function') return undefined;
         try {
+          const subscribe = ctx?.locale?.subscribe;
+          if (typeof subscribe !== 'function') return undefined;
           return subscribe(() => setLang(activeLang(ctx)));
         } catch (error) {
           return undefined;
@@ -341,7 +341,8 @@ window.__ModuleLoader__.load({
     }
 
     return {
-      inject: ['slots'],
+      // `locale` must be declared: a Client service accessor throws without it.
+      inject: ['slots', 'locale'],
       apply(ctx) {
         // Fail loud at activation rather than as a silent blank slot.
         h('div', null);
