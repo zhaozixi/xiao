@@ -1,8 +1,13 @@
 window.__ModuleLoader__.load({
   id: '@local/dsh-xiao',
   factory(require) {
-    const React = require('react');
+    const reactModule = require('react');
+    // Accept either the namespace itself or its default export.
+    const React = typeof reactModule?.createElement === 'function' ? reactModule : (reactModule?.default ?? reactModule);
     const h = React.createElement;
+    if (typeof h !== 'function' || typeof React.useState !== 'function') {
+      throw new Error('dsh-xiao client: react module shape is unusable (no createElement/useState)');
+    }
 
     const DICT = {
       zh: {
@@ -73,16 +78,27 @@ window.__ModuleLoader__.load({
       },
     };
 
+    const C = {
+      text: 'var(--dsw-alias-label-primary)',
+      dim: 'var(--dsw-alias-label-secondary)',
+      line: 'var(--dsw-alias-border-l1)',
+      warn: 'var(--dsw-alias-state-warn-primary)',
+      error: 'var(--dsw-alias-state-error-primary)',
+    };
+
     function activeLang(ctx) {
       try {
-        const snapshot = ctx?.locale?.getLocale?.();
-        const active = snapshot?.active ?? '';
+        const active = ctx?.locale?.getLocale?.()?.active ?? '';
         if (active) return String(active).toLowerCase().startsWith('zh') ? 'zh' : 'en';
       } catch (error) {
-        /* fall through to the document language */
+        /* ignore */
       }
-      const docLang = (typeof document !== 'undefined' && document.documentElement?.lang) || 'en';
-      return String(docLang).toLowerCase().startsWith('zh') ? 'zh' : 'en';
+      try {
+        const lang = (typeof document !== 'undefined' && document.documentElement?.lang) || 'en';
+        return String(lang).toLowerCase().startsWith('zh') ? 'zh' : 'en';
+      } catch (error) {
+        return 'zh';
+      }
     }
 
     function useLang(ctx) {
@@ -99,10 +115,12 @@ window.__ModuleLoader__.load({
       return lang;
     }
 
-    function useState0(url) {
+    function useSnapshot(url) {
       const [state, setState] = React.useState({ status: 'loading' });
       React.useEffect(() => {
         let alive = true;
+        // Mount beacon: a distinct query so the request shows up even if rendering fails.
+        fetch(`${url}?ping=mount`, { headers: { accept: 'application/json' } }).catch(() => {});
         fetch(url, { headers: { accept: 'application/json' } })
           .then((response) => (response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`))))
           .then((value) => {
@@ -118,149 +136,48 @@ window.__ModuleLoader__.load({
       return state;
     }
 
-    const tone = {
-      color: 'var(--dsw-alias-label-primary)',
-      fontSize: 13,
-      lineHeight: 1.55,
-    };
-
-    function Row(label, value) {
+    function errorView(error) {
+      const detail = error?.stack || error?.message || String(error);
       return h(
-        'div',
-        { key: label, style: { display: 'flex', gap: 12, padding: '4px 0' } },
-        h('span', { style: { color: 'var(--dsw-alias-label-secondary)', minWidth: 64, fontSize: 13 } }, label),
-        h('span', { style: tone }, value),
+        'pre',
+        {
+          style: {
+            color: C.error,
+            whiteSpace: 'pre-wrap',
+            fontSize: 12,
+            border: `1px solid ${C.line}`,
+            borderRadius: 8,
+            padding: 10,
+          },
+        },
+        `xiao render error: ${detail}`,
       );
     }
 
-    function XiaoSection(props) {
-      const ctx = props.ctx;
-      const lang = useLang(ctx);
-      const dict = DICT[lang] ?? DICT.zh;
-      const snapshot = useState0('/xiao/state');
-
-      const card = {
-        background: 'var(--dsw-alias-bg-layer-1)',
-        border: '1px solid var(--dsw-alias-border-l1)',
-        borderRadius: 10,
-        padding: '12px 14px',
-        margin: '10px 0 18px',
-        whiteSpace: 'pre-wrap',
-        fontFamily: 'inherit',
-        fontSize: 13,
-        lineHeight: 1.7,
-        color: 'var(--dsw-alias-label-primary)',
-      };
-
-      const heading = (text) =>
-        h(
-          'h3',
-          {
-            key: text,
-            style: {
-              margin: '18px 0 6px',
-              fontSize: 12,
-              fontWeight: 600,
-              letterSpacing: '0.04em',
-              textTransform: 'uppercase',
-              color: 'var(--dsw-alias-label-secondary)',
-            },
-          },
-          text,
-        );
-
-      if (snapshot.status === 'loading') {
-        return h('div', { style: { ...tone, color: 'var(--dsw-alias-label-secondary)', padding: 16 } }, dict.loading);
-      }
-      if (snapshot.status === 'error') {
-        return h(
-          'div',
-          { style: { ...tone, color: 'var(--dsw-alias-state-error-primary)', padding: 16 } },
-          `${dict.error}：${snapshot.error}`,
-        );
-      }
-
-      const value = snapshot.value ?? {};
-      if (!value.ready) {
-        return h('div', { style: { ...tone, padding: 16 } }, dict.empty);
-      }
-      const identity = value.identity ?? {};
-      const traits = value.traits ?? {};
-      const facts = Array.isArray(value.facts) ? value.facts : [];
-
+    function row(key, label, value) {
       return h(
         'div',
-        { style: { padding: '4px 2px 24px', maxWidth: 720 } },
-        h('div', { style: { ...tone, color: 'var(--dsw-alias-label-secondary)', marginBottom: 12 } }, dict.subtitle),
-        heading(dict.identity),
-        Row(dict.fields.gender, identity.gender ?? '—'),
-        Row(dict.fields.age, String(identity.age ?? '—')),
-        Row(dict.fields.job, identity.job ?? '—'),
-        Row(dict.fields.tone, value.tone ?? '—'),
-        heading(dict.traits),
-        Row(dict.fields.outlook, traits.outlook ?? '—'),
-        Row(dict.fields.curiosity, traits.curiosity ?? '—'),
-        Row(dict.fields.speech, traits.speech ?? '—'),
-        Row(dict.fields.hobby, traits.hobby ?? '—'),
-        Row(dict.fields.quirk, traits.quirk ?? '—'),
-        heading(dict.card),
-        h('pre', { style: card }, value.card || '—'),
-        heading(`${dict.timeline} · ${facts.length}`),
-        facts.length === 0
-          ? h('div', { style: { ...tone, color: 'var(--dsw-alias-label-secondary)' } }, dict.empty)
-          : h(
-              'ul',
-              { style: { listStyle: 'none', margin: 0, padding: 0 } },
-              facts
-                .slice()
-                .reverse()
-                .slice(0, 40)
-                .map((fact) =>
-                  h(
-                    'li',
-                    {
-                      key: String(fact.seq),
-                      style: {
-                        display: 'flex',
-                        gap: 10,
-                        alignItems: 'baseline',
-                        padding: '6px 0',
-                        borderBottom: '1px solid var(--dsw-alias-border-l1)',
-                        fontSize: 13,
-                      },
-                    },
-                    h(
-                      'span',
-                      {
-                        style: {
-                          color: 'var(--dsw-alias-label-secondary)',
-                          fontSize: 11,
-                          minWidth: 72,
-                          textTransform: 'uppercase',
-                        },
-                      },
-                      dict.kinds[fact.kind] ?? fact.kind,
-                    ),
-                    h('span', { style: { ...tone, flex: 1 } }, describe(fact)),
-                    fact.kind === 'event'
-                      ? h(
-                          'span',
-                          {
-                            style: {
-                              color: 'var(--dsw-alias-state-warn-primary)',
-                              fontSize: 11,
-                              border: '1px solid var(--dsw-alias-border-l1)',
-                              borderRadius: 4,
-                              padding: '0 4px',
-                            },
-                          },
-                          dict.simulated,
-                        )
-                      : null,
-                  ),
-                ),
-            ),
-        h('div', { style: { ...tone, color: 'var(--dsw-alias-label-secondary)', marginTop: 14, fontSize: 12 } }, dict.note),
+        { key, style: { display: 'flex', gap: 12, padding: '3px 0' } },
+        h('span', { style: { color: C.dim, minWidth: 64, fontSize: 13 } }, label),
+        h('span', { style: { color: C.text, fontSize: 13 } }, value),
+      );
+    }
+
+    function heading(key, text) {
+      return h(
+        'h3',
+        {
+          key,
+          style: {
+            margin: '16px 0 4px',
+            fontSize: 12,
+            fontWeight: 600,
+            letterSpacing: '0.04em',
+            textTransform: 'uppercase',
+            color: C.dim,
+          },
+        },
+        text,
       );
     }
 
@@ -270,7 +187,6 @@ window.__ModuleLoader__.load({
         case 'birth':
           return `seed ${String(data.seed ?? '').slice(0, 8)}…`;
         case 'event':
-          return data.text ?? '';
         case 'user_fact':
         case 'health':
           return data.text ?? '';
@@ -287,13 +203,151 @@ window.__ModuleLoader__.load({
       }
     }
 
+    function contentOf(snapshot, dict) {
+      if (snapshot.status === 'loading') {
+        return h('div', { style: { color: C.dim, fontSize: 13, padding: '12px 0' } }, dict.loading);
+      }
+      if (snapshot.status === 'error') {
+        return h('div', { style: { color: C.error, fontSize: 13, padding: '12px 0' } }, `${dict.error}：${snapshot.error}`);
+      }
+      const value = snapshot.value ?? {};
+      if (!value.ready) {
+        return h('div', { style: { color: C.dim, fontSize: 13, padding: '12px 0' } }, dict.empty);
+      }
+      const identity = value.identity ?? {};
+      const traits = value.traits ?? {};
+      const facts = Array.isArray(value.facts) ? value.facts : [];
+
+      const children = [
+        h('div', { key: 'subtitle', style: { color: C.dim, fontSize: 13, margin: '2px 0 6px' } }, dict.subtitle),
+        heading('h-identity', dict.identity),
+        row('gender', dict.fields.gender, identity.gender ?? '—'),
+        row('age', dict.fields.age, String(identity.age ?? '—')),
+        row('job', dict.fields.job, identity.job ?? '—'),
+        row('tone', dict.fields.tone, value.tone ?? '—'),
+        heading('h-traits', dict.traits),
+        row('outlook', dict.fields.outlook, traits.outlook ?? '—'),
+        row('curiosity', dict.fields.curiosity, traits.curiosity ?? '—'),
+        row('speech', dict.fields.speech, traits.speech ?? '—'),
+        row('hobby', dict.fields.hobby, traits.hobby ?? '—'),
+        row('quirk', dict.fields.quirk, traits.quirk ?? '—'),
+        heading('h-card', dict.card),
+        h(
+          'pre',
+          {
+            key: 'card',
+            style: {
+              background: 'var(--dsw-alias-bg-layer-1)',
+              border: `1px solid ${C.line}`,
+              borderRadius: 10,
+              padding: '12px 14px',
+              margin: '6px 0 4px',
+              whiteSpace: 'pre-wrap',
+              fontFamily: 'inherit',
+              fontSize: 13,
+              lineHeight: 1.7,
+              color: C.text,
+            },
+          },
+          value.card || '—',
+        ),
+        heading('h-timeline', `${dict.timeline} · ${facts.length}`),
+      ];
+
+      if (facts.length === 0) {
+        children.push(h('div', { key: 'empty', style: { color: C.dim, fontSize: 13 } }, dict.empty));
+      } else {
+        const items = facts
+          .slice()
+          .reverse()
+          .slice(0, 40)
+          .map((fact) =>
+            h(
+              'li',
+              {
+                key: String(fact.seq),
+                style: {
+                  display: 'flex',
+                  gap: 10,
+                  alignItems: 'baseline',
+                  padding: '6px 0',
+                  borderBottom: `1px solid ${C.line}`,
+                  fontSize: 13,
+                },
+              },
+              h(
+                'span',
+                { style: { color: C.dim, fontSize: 11, minWidth: 72, textTransform: 'uppercase' } },
+                dict.kinds[fact.kind] ?? fact.kind,
+              ),
+              h('span', { style: { color: C.text, flex: 1 } }, describe(fact)),
+              fact.kind === 'event'
+                ? h(
+                    'span',
+                    {
+                      style: {
+                        color: C.warn,
+                        fontSize: 11,
+                        border: `1px solid ${C.line}`,
+                        borderRadius: 4,
+                        padding: '0 4px',
+                      },
+                    },
+                    dict.simulated,
+                  )
+                : null,
+            ),
+          );
+        children.push(h('ul', { key: 'facts', style: { listStyle: 'none', margin: 0, padding: 0 } }, items));
+      }
+
+      children.push(h('div', { key: 'note', style: { color: C.dim, fontSize: 12, marginTop: 14 } }, dict.note));
+      return h('div', { key: 'body' }, children);
+    }
+
+    function XiaoSection(props) {
+      const ctx = props?.ctx;
+      const lang = useLang(ctx);
+      const dict = DICT[lang] ?? DICT.zh;
+      const snapshot = useSnapshot('/xiao/state');
+      let content;
+      try {
+        content = contentOf(snapshot, dict);
+      } catch (error) {
+        content = errorView(error);
+      }
+      return h(
+        'div',
+        { style: { padding: '4px 2px 24px', maxWidth: 720 } },
+        h('div', { style: { fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 2 } }, '晓 · dsh-xiao'),
+        content,
+      );
+    }
+
+    class Boundary extends React.Component {
+      constructor(props) {
+        super(props);
+        this.state = { error: null };
+      }
+
+      static getDerivedStateFromError(error) {
+        return { error };
+      }
+
+      render() {
+        if (this.state.error) return errorView(this.state.error);
+        return this.props?.children ?? null;
+      }
+    }
+
     return {
       inject: ['slots'],
       apply(ctx) {
+        // Fail loud at activation rather than as a silent blank slot.
+        h('div', null);
         ctx.slots.inject('settings.section', () =>
-          ctx.slots.register(
-            { name: 'settings.section', id: 'xiao', order: 25, label: '晓' },
-            (props) => h(XiaoSection, { ...props, ctx }),
+          ctx.slots.register({ name: 'settings.section', id: 'xiao', order: 25, label: '晓' }, (props) =>
+            h(Boundary, null, h(XiaoSection, { ...props, ctx })),
           ),
         );
       },
