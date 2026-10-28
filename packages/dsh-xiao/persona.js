@@ -169,14 +169,19 @@ const COMMUTE = ['地铁三站，再走八分钟', '骑车二十分钟', '公交
  * moves her furniture.
  * @param {string} seed - instance seed.
  * @param {string} city - where she lives now.
+ * @param {number} [seedAge] - her age at birth; a constant, so the flat does not change
+ *   when she has a birthday.
  * @returns {{home: object, nearby: string[]}} home and familiar spots.
  */
-export function deriveHome(seed, city) {
+export function deriveHome(seed, city, seedAge) {
   // The city is part of the salt: moving to another city must not reproduce the same
   // street and the same three shops she had in the old one.
   const rnd = mulberry32(hashString(`${seed}#home#${city}`));
   const area = pick(rnd, AREAS);
-  const home = { city, area, detail: pick(rnd, HOME_DETAIL) };
+  // A 56-year-old sharing a two-bedroom with roommates is possible but unusual enough to
+  // read as a bug, so that option is only available to younger personas.
+  const detailPool = Number(seedAge) >= 40 ? HOME_DETAIL.filter((detail) => !detail.includes('合租')) : HOME_DETAIL;
+  const home = { city, area, detail: pick(rnd, detailPool) };
   const nearby = [];
   const pool = [...NEARBY];
   while (nearby.length < 3 && pool.length > 0) {
@@ -226,8 +231,8 @@ export function deriveWork(seed, city, job, jobCategory) {
  * @param {string} jobCategory - its category.
  * @returns {{home: object, work: object|null, commute: string, nearby: string[]}} places.
  */
-export function derivePlaces(seed, city, job, jobCategory) {
-  const { home, nearby } = deriveHome(seed, city);
+export function derivePlaces(seed, city, job, jobCategory, options = {}) {
+  const { home, nearby } = deriveHome(seed, city, options.seedAge);
   const { work, commute } = deriveWork(seed, city, job, jobCategory);
   return { home, work, commute, nearby };
 }
@@ -281,7 +286,18 @@ function deriveRelations(rnd, jobCategory, age, shape = {}) {
   // couple with a four-year-old, so that option is unavailable once a child exists.
   const hasChild = hasPartner && age >= 32 && rnd() < 0.4;
   if (hasPartner) {
-    const partnerPool = hasChild ? PARTNER_DETAIL.filter((detail) => detail !== '刚搬到一起住') : PARTNER_DETAIL;
+    // How long they have been together has to come from her age, not from a fixed pool:
+    // "在一起三年了" on a 56-year-old contradicts a timeline that starts at 25.
+    const partnerAge = Math.max(18, Math.min(age - 2, 24 + Math.floor(rnd() * 6)));
+    const together = Math.max(1, age - partnerAge);
+    let partnerPool;
+    if (together <= 3) {
+      const spelled = { 1: '一年', 2: '两年', 3: '三年' }[together] ?? `${together} 年`;
+      partnerPool = [`在一起${spelled}了`, '刚搬到一起住'];
+    } else {
+      partnerPool = ['在一起很多年了', '总提醒按时吃饭'];
+    }
+    if (hasChild) partnerPool = partnerPool.filter((detail) => detail !== '刚搬到一起住');
     relations.push({ id: 'partner', kind: 'partner', role: '伴侣', name: anyName(), detail: pick(rnd, partnerPool) });
     if (hasChild) {
       const girl = rnd() < 0.5;
@@ -426,7 +442,7 @@ export function derivePersona(seed) {
     currentCity,
     movedAt,
     interests,
-    places: derivePlaces(seed, currentCity, chosen.job, chosen.category),
+    places: derivePlaces(seed, currentCity, chosen.job, chosen.category, { seedAge: age }),
   };
 }
 
@@ -1590,7 +1606,9 @@ export function fold(records, cfg, now) {
   const currentCity = overrides.has('city') ? String(overrides.get('city')) : base.currentCity;
   // Places follow the *current* city and the *current* job: move her and the flat moves
   // with her; lose the job and the workplace disappears.
-  const places = derivePlaces(birth.data.seed, currentCity, job, jobChosen ? jobCategory : 'undecided');
+  const places = derivePlaces(birth.data.seed, currentCity, job, jobChosen ? jobCategory : 'undecided', {
+    seedAge: base.age,
+  });
 
   return {
     instanceId: birth.data.instanceId,

@@ -46,6 +46,33 @@ test('relation details fit either gender and the two parents differ', () => {
   }
 });
 
+test('how long they have been together matches how old she is', () => {
+  let checked = 0;
+  for (let index = 0; index < 200; index += 1) {
+    const persona = derivePersona(`together-seed-${index}`);
+    const partner = persona.relations.find((relation) => relation.kind === 'partner');
+    if (!partner || persona.age < 40) continue;
+    checked += 1;
+    // A 56-year-old cannot have been together three years if her timeline starts at 25.
+    assert.ok(
+      !/在一起[一二两三四五六七八九十\d]+年了|刚搬到一起住/.test(partner.detail),
+      `${persona.age}: ${partner.detail}`,
+    );
+  }
+  assert.ok(checked > 5, 'the fixture needs older personas with a partner');
+});
+
+test('nobody over forty is sharing a flat with roommates', () => {
+  let checked = 0;
+  for (let index = 0; index < 120; index += 1) {
+    const persona = derivePersona(`flat-seed-${index}`);
+    if (persona.age < 40) continue;
+    checked += 1;
+    assert.ok(!persona.places.home.detail.includes('合租'), `${persona.age}: ${persona.places.home.detail}`);
+  }
+  assert.ok(checked > 5);
+});
+
 test('a couple with a child never just moved in together', () => {
   let withChild = 0;
   for (let index = 0; index < 200; index += 1) {
