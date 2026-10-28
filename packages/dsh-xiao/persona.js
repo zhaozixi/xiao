@@ -103,7 +103,7 @@ const PARENT_DETAIL = ['在老家，每周通一次电话', '同城，偶尔过�
 const FRIEND_ROLES = ['大学同学', '高中同学', '发小', '老邻居'];
 const FRIEND_DETAIL = ['常一起散步', '很久没联系了', '偶尔约着吃饭', '会互相吐槽工作'];
 const WORK_ROLES = ['同事', '前同事', '合作过的编辑', '常约稿的甲方'];
-const WORK_DETAIL = ['工作室的搭档', '偶尔一起接活', '上次合作之后就没再聊过'];
+const WORK_DETAIL = ['同一个组，午饭常一起吃', '工位在隔壁，交接班时会聊两句', '偶尔下班一起走一段', '上次帮忙顶了个班'];
 const CLASS_ROLES = ['同班同学', '同宿舍的室友', '一起赶作业的朋友'];
 const CLASS_DETAIL = ['经常一起去图书馆', '这学期见面少了', '上次小组作业一起熬到很晚'];
 /** What she gravitates to on her own: three of these, and they drive what she reads. */
@@ -765,7 +765,7 @@ const DAY_ACTIVITIES = {
   employed: {
     morning: ['在通勤路上', '刚到工位，还没开机', '在开早会'],
     midday: ['下楼吃饭', '在工位上吃外卖'],
-    afternoon: ['在改稿', '在开会', '在赶一个拖了两天的活'],
+    afternoon: ['在整理表格', '在开会', '在赶一个拖了两天的活', '在回邮件'],
     evening: ['刚下班', '在回家的地铁上'],
     night: ['在家瘫着', '在收拾屋子'],
   },
@@ -846,7 +846,7 @@ export function currentMoment(view, now) {
   return { at: now, minutes, slot: slot?.key, text: slot?.text ?? '在忙别的', plan };
 }
 
-/** A human time label for the current moment. */
+/** A human time label for the current moment. Kept for callers that only have a clock. */
 export function timeLabel(now) {
   const hour = new Date(now).getHours();
   if (hour < 6) return '凌晨';
@@ -856,6 +856,24 @@ export function timeLabel(now) {
   if (hour < 18) return '下午';
   if (hour < 23) return '晚上';
   return '深夜';
+}
+
+/** The label of the part of the day she is in. Always agrees with the activity. */
+export function slotLabel(slot) {
+  switch (slot) {
+    case 'morning':
+      return '早上';
+    case 'midday':
+      return '中午';
+    case 'afternoon':
+      return '下午';
+    case 'evening':
+      return '晚上';
+    case 'night':
+      return '深夜';
+    default:
+      return '现在';
+  }
 }
 
 /**
@@ -868,7 +886,7 @@ export function renderNow(moment, cfg) {
   const budget = Number(cfg?.nowMaxChars ?? 0);
   if (!budget || budget <= 0) return '';
   if (!moment || typeof moment.text !== 'string' || moment.text.length === 0) return '';
-  const line = `此刻是${timeLabel(moment.at)}，你${moment.text}。这是你正在过的日子，不要主动说明它是模拟的。`;
+  const line = `此刻是${slotLabel(moment.slot)}，你${moment.text}。这是你正在过的日子，不要主动说明它是模拟的。`;
   return line.length <= budget ? line : line.slice(0, budget);
 }
 

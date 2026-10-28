@@ -34,6 +34,7 @@ import {
   summarizeSearch,
   currentMoment,
   localDay,
+  slotLabel,
   timeLabel,
 } from './persona.js';
 
@@ -239,7 +240,7 @@ export function apply(ctx, config) {
   const momentOf = (view) => {
     if (!view) return undefined;
     const moment = currentMoment(view, Date.now());
-    return { label: timeLabel(moment.at), text: moment.text, slot: moment.slot, plan: moment.plan };
+    return { label: slotLabel(moment.slot), text: moment.text, slot: moment.slot, plan: moment.plan };
   };
 
   /** Notes she wrote for herself, oldest first. */

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { RULES_VERSION, currentMoment, deriveDay, fold, renderNow, timeLabel } from '../persona.js';
+import { RULES_VERSION, currentMoment, deriveDay, fold, renderNow, slotLabel, timeLabel } from '../persona.js';
 
 const DAY = 86_400_000;
 // A fixed local noon, so the test does not depend on the machine's timezone offset.
@@ -81,4 +81,27 @@ test('the line says what time it is and what she is doing, within budget', () =>
   assert.equal(timeLabel(NOON), '中午');
   assert.equal(renderNow(moment, { nowMaxChars: 0 }), '');
   assert.equal(renderNow(undefined, { nowMaxChars: 120 }), '');
+});
+
+test('the label always agrees with the part of the day she is in', () => {
+  const view = viewOf('day-seed-7');
+  const edges = [
+    [0, 30],
+    [6, 59],
+    [7, 1],
+    [11, 29],
+    [11, 31],
+    [13, 29],
+    [13, 31],
+    [17, 59],
+    [18, 1],
+    [21, 59],
+    [22, 1],
+  ];
+  for (const [hour, minute] of edges) {
+    const at = new Date(2026, 9, 28, hour, minute).getTime();
+    const moment = currentMoment(view, at);
+    const line = renderNow(moment, { nowMaxChars: 200 });
+    assert.ok(line.startsWith(`此刻是${slotLabel(moment.slot)}`), `${hour}:${minute} produced ${line}`);
+  }
 });
