@@ -808,13 +808,25 @@ function activityPool(view) {
 }
 
 /**
+ * The calendar day in *local* time, as an epoch-day number. Using `now / DAY_MS` would
+ * switch her day at UTC midnight, which in UTC+8 is eight in the morning.
+ * @param {number} now - wall clock.
+ * @returns {number} a stable per-local-day number.
+ */
+export function localDay(now = Date.now()) {
+  const date = new Date(now);
+  const midnight = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  return Math.floor(midnight / DAY_MS);
+}
+
+/**
  * Her day, derived once per calendar day so it stays put while you talk.
  * @param {object} view - folded character view.
  * @param {number} now - wall clock.
  * @returns {{key: string, from: number, to: number, text: string}[]} five parts.
  */
 export function deriveDay(view, now) {
-  const day = Math.floor(now / DAY_MS);
+  const day = localDay(now);
   const rnd = mulberry32(hashString(`${view?.seed ?? 'x'}#day#${day}`));
   const pool = activityPool(view);
   return DAY_SLOTS.map((slot) => ({

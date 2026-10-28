@@ -44,6 +44,15 @@ test('the same day keeps the same plan, a different day does not', () => {
   assert.ok(texts.size > 1, 'the plan should change with the date');
 });
 
+test('a day starts at local midnight, not at UTC midnight', () => {
+  const view = viewOf('day-seed-6');
+  const early = new Date(2026, 9, 28, 0, 10).getTime();
+  const late = new Date(2026, 9, 28, 23, 50).getTime();
+  const nextMorning = new Date(2026, 9, 29, 0, 20).getTime();
+  assert.deepEqual(deriveDay(view, early), deriveDay(view, late), 'one local day, one plan');
+  assert.notDeepEqual(deriveDay(view, late), deriveDay(view, nextMorning), 'a new day, a new plan');
+});
+
 test('the current moment falls in exactly one part of the day', () => {
   const view = viewOf('day-seed-3');
   for (const hour of [0, 7, 10, 12, 15, 19, 23]) {

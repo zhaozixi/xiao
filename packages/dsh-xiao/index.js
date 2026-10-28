@@ -33,6 +33,7 @@ import {
   suggestTransition,
   summarizeSearch,
   currentMoment,
+  localDay,
   timeLabel,
 } from './persona.js';
 
@@ -267,7 +268,7 @@ export function apply(ctx, config) {
         if (!web || typeof web.search !== 'function') return;
         const view = refresh();
         if (!view) return;
-        const today = Math.floor(Date.now() / DAY_MS);
+        const today = localDay();
         const flags = state.domain.table('flags');
         const marker = flags.get('research');
         const used = marker && marker.day === today ? Number(marker.used) || 0 : 0;
@@ -341,15 +342,30 @@ export function apply(ctx, config) {
     }
   });
 
+  /** Whether background work may run for this agent: not for subagents, and not for
+   * presets the persona card is not shown in either. */
+  const sessionAllowsBackground = (agent) => {
+    const id = agent && typeof agent.id === 'string' ? agent.id : undefined;
+    const header = id ? sessions.get(id) : undefined;
+    if (header && header.origin === 'subagent') return false;
+    if (header && cfg.enabledForPresets.length > 0) {
+      return cfg.enabledForPresets.includes(header.agentPreset ?? '');
+    }
+    return true;
+  };
+
   // A new session is the natural moment to catch her life up to yesterday. Fire and
   // forget: it pins past days and never speaks, so it cannot delay or interrupt anything.
-  ctx.on('agent/created', () => {
+  ctx.on('agent/created', (payload) => {
+    if (!sessionAllowsBackground(payload?.agent)) return;
     void syncLife();
   });
 
   // After a turn, she may go and look something up on her own. Fire and forget: this is
-  // her own time, so it never delays or interrupts the reply.
-  ctx.on('agent/turn-stopping', () => {
+  // her own time, so it never delays or interrupts the reply. Subagent turns must not
+  // spend her daily quota.
+  ctx.on('agent/turn-stopping', (payload) => {
+    if (!sessionAllowsBackground(payload?.agent)) return;
     void runResearch();
   });
 
