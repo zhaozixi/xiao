@@ -32,9 +32,35 @@ test('a persona is born somewhere, on some date, with parents', () => {
   }
 });
 
+test('relation details fit either gender and the two parents differ', () => {
+  for (let index = 0; index < 40; index += 1) {
+    const persona = derivePersona(`pronoun-seed-${index}`);
+    for (const relation of persona.relations) {
+      // A shared pool cannot know whether the character is male or female, so a pronoun
+      // in a detail sentence will be wrong half the time.
+      assert.ok(!/[她他]/.test(relation.detail), `${relation.role}: ${relation.detail}`);
+    }
+    const mother = persona.relations.find((relation) => relation.id === 'mother');
+    const father = persona.relations.find((relation) => relation.id === 'father');
+    assert.notEqual(mother.detail, father.detail, 'two parents with one sentence reads as a bug');
+  }
+});
+
+test('a couple with a child never just moved in together', () => {
+  let withChild = 0;
+  for (let index = 0; index < 200; index += 1) {
+    const persona = derivePersona(`family-seed-${index}`);
+    const partner = persona.relations.find((relation) => relation.kind === 'partner');
+    const child = persona.relations.find((relation) => relation.kind === 'child');
+    if (!child) continue;
+    withChild += 1;
+    assert.notEqual(partner.detail, '刚搬到一起住', `${persona.age} with a child: ${partner.detail}`);
+  }
+  assert.ok(withChild > 0, 'the fixture needs at least one persona with a child');
+});
+
 test('a partner and a child are plausible but never mandatory', () => {
-  let withPartner = 0;
-  for (let index = 0; index < 60; index += 1) {
+  let withPartner = 0;  for (let index = 0; index < 60; index += 1) {
     const persona = derivePersona(`partner-seed-${index}`);
     const ids = persona.relations.map((relation) => relation.id);
     const hasPartner = ids.includes('partner');

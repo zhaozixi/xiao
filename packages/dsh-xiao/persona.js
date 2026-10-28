@@ -100,11 +100,12 @@ const GIVEN_FEMALE = ['婧', '婷', '悦', '楠', '若', '岚', '敏', '嘉'];
 const GIVEN_MALE = ['航', '磊', '阳', '帆', '鹏', '川', '岑', '斌'];
 
 /**
- * Parents stay where she was born. "同城，偶尔过来吃饭" is only true for a daughter who
- * never moved away, so the pool depends on that.
+ * Parents stay where she was born. "同城，偶尔过来吃饭" is only true for someone who never
+ * moved away, so the pool depends on that. No pronoun appears here on purpose: the same
+ * sentence has to fit a male or a female character ("担心她的工作" does not).
  */
-const PARENT_DETAIL_STAYED = ['同城，偶尔过来吃饭', '总担心她的工作不稳定', '身体还好，就是嘴上不饶人'];
-const PARENT_DETAIL_AWAY = ['在老家，每周通一次电话', '总担心她的工作不稳定', '身体还好，就是嘴上不饶人'];
+const PARENT_DETAIL_STAYED = ['同城，偶尔过来吃饭', '总担心工作不稳定', '身体还好，就是嘴上不饶人'];
+const PARENT_DETAIL_AWAY = ['在老家，每周通一次电话', '总担心工作不稳定', '身体还好，就是嘴上不饶人'];
 const FRIEND_ROLES = ['大学同学', '高中同学', '发小', '老邻居'];
 const FRIEND_DETAIL = ['常一起散步', '很久没联系了', '偶尔约着吃饭', '会互相吐槽工作'];
 /**
@@ -145,7 +146,7 @@ const INTERESTS = [
   '编织',
 ];
 
-const PARTNER_DETAIL = ['在一起三年了', '刚搬到一起住', '总提醒她按时吃饭'];
+const PARTNER_DETAIL = ['在一起三年了', '刚搬到一起住', '总提醒按时吃饭'];
 const CHILD_DETAIL = ['在老家由父母带着', '照片里总是笑着的', '每个月见两三次'];
 
 /** Where the day actually happens: a neighbourhood, a flat, a few familiar corners. */
@@ -258,9 +259,14 @@ function deriveRelations(rnd, jobCategory, age, shape = {}) {
   const anyName = () => nextFrom(rnd() < 0.5 ? GIVEN_FEMALE : GIVEN_MALE);
   const parentPool = shape.moved ? PARENT_DETAIL_AWAY : PARENT_DETAIL_STAYED;
 
+  const motherDetail = pick(rnd, parentPool);
+  // Two parents with the same sentence reads like a copy-paste bug, so draw without
+  // replacement.
+  const fatherDetail = pick(rnd, parentPool.filter((detail) => detail !== motherDetail));
+
   const relations = [
-    { id: 'mother', kind: 'family', role: '母亲', name: nextFrom(GIVEN_FEMALE), detail: pick(rnd, parentPool) },
-    { id: 'father', kind: 'family', role: '父亲', name: nextFrom(GIVEN_MALE), detail: pick(rnd, parentPool) },
+    { id: 'mother', kind: 'family', role: '母亲', name: nextFrom(GIVEN_FEMALE), detail: motherDetail },
+    { id: 'father', kind: 'family', role: '父亲', name: nextFrom(GIVEN_MALE), detail: fatherDetail },
     { id: 'friend', kind: 'friend', role: pick(rnd, FRIEND_ROLES), name: anyName(), detail: pick(rnd, FRIEND_DETAIL) },
   ];
   if (jobCategory === 'student') {
@@ -271,9 +277,13 @@ function deriveRelations(rnd, jobCategory, age, shape = {}) {
   }
 
   const hasPartner = age >= 25 && rnd() < 0.45;
+  // Decided before the partner's description is drawn: "刚搬到一起住" cannot be true of a
+  // couple with a four-year-old, so that option is unavailable once a child exists.
+  const hasChild = hasPartner && age >= 32 && rnd() < 0.4;
   if (hasPartner) {
-    relations.push({ id: 'partner', kind: 'partner', role: '伴侣', name: anyName(), detail: pick(rnd, PARTNER_DETAIL) });
-    if (age >= 32 && rnd() < 0.4) {
+    const partnerPool = hasChild ? PARTNER_DETAIL.filter((detail) => detail !== '刚搬到一起住') : PARTNER_DETAIL;
+    relations.push({ id: 'partner', kind: 'partner', role: '伴侣', name: anyName(), detail: pick(rnd, partnerPool) });
+    if (hasChild) {
       const girl = rnd() < 0.5;
       relations.push({
         id: 'child',

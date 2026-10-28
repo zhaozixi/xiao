@@ -330,7 +330,10 @@ export function apply(ctx, config) {
         const summary = summarizeSearch(result);
         stats.researchCalls += 1;
         await flags.put('research', { day: today, used: used + 1 });
-        if (!summary) return;
+        if (!summary) {
+          log('info', `looked up "${query}" but kept nothing (no usable source, or all traditional)`);
+          return;
+        }
         const now = Date.now();
         await notes.put(`${String(today).padStart(6, '0')}-${now}`, {
           at: now,
