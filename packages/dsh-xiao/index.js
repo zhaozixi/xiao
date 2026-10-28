@@ -527,9 +527,18 @@ export function apply(ctx, config) {
     },
   });
 
-  const snapshotOf = (view) => {
+  /**
+   * Read-only snapshot for the page. The fact list is paged newest-first: `limit` caps the
+   * page, `before` walks older pages (exclusive seq), and `factsTotal` lets the client know
+   * whether anything older remains without trusting a running counter.
+   */
+  const snapshotOf = (view, options = {}) => {
     if (!view) return { ready: false };
-    const facts = [...state.domain.table('facts').entries()].map(([, record]) => record).sort(compareSeq);
+    const all = [...state.domain.table('facts').entries()].map(([, record]) => record).sort(compareSeq);
+    const limit = Math.min(1000, Math.max(1, Number.isFinite(options.limit) ? Math.floor(options.limit) : 200));
+    const before = Number.isFinite(options.before) ? options.before : undefined;
+    const pool = before === undefined ? all : all.filter((record) => record.seq < before);
+    const page = pool.slice(Math.max(0, pool.length - limit));
     return {
       ready: true,
       instanceId: view.instanceId,
@@ -553,7 +562,9 @@ export function apply(ctx, config) {
       bornAt: view.bornAt,
       card: renderCard(view, cfg),
       factsCount: view.factCount,
-      facts,
+      facts: page,
+      factsTotal: all.length,
+      oldestSeq: page.length > 0 ? page[0].seq : undefined,
       pageRequests: { ...pageHits },
       feed: feedState,
     };
@@ -572,18 +583,26 @@ export function apply(ctx, config) {
         requestBody: 'buffered',
         fetch: async (request) => {
           if (request.method !== 'GET') return new Response('method not allowed', { status: 405 });
+          const url = new URL(request.url, 'http://localhost');
           // The page's mount beacon: answer it cheaply and keep it out of the counters,
           // so `page` means "the page actually loaded data".
-          if (new URL(request.url, 'http://localhost').searchParams.has('ping')) {
+          if (url.searchParams.has('ping')) {
             return new Response('{"ok":true}', {
               headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
             });
           }
           pageHits.total += 1;
           if (request.headers.get('x-xiao-client') === 'settings') pageHits.page += 1;
+          const limit = Number(url.searchParams.get('limit'));
+          const before = Number(url.searchParams.get('before'));
           let body;
           try {
-            body = JSON.stringify(snapshotOf(state.ready ? refresh() : null));
+            body = JSON.stringify(
+              snapshotOf(state.ready ? refresh() : null, {
+                limit: Number.isFinite(limit) && limit > 0 ? limit : undefined,
+                before: Number.isFinite(before) && before > 0 ? before : undefined,
+              }),
+            );
           } catch (error) {
             return new Response(String(error?.message ?? error), { status: 500 });
           }

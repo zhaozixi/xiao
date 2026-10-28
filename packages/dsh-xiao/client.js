@@ -32,6 +32,11 @@ window.__ModuleLoader__.load({
         total: '共',
         refresh: '刷新',
         refreshTitle: '重新读取当前状态',
+        loadOlder: '加载更早',
+        loadingOlder: '加载中…',
+        allDays: '全部',
+        guardRejected: '守卫拦截',
+        toolRejected: '工具拒绝',
         born: '出生于',
         openPage: '事实时间线在左侧栏的「晓」页面。',
         note: '这里只读。改状态要通过对话里的 xiao_update 工具。',
@@ -96,6 +101,11 @@ window.__ModuleLoader__.load({
         total: 'of',
         refresh: 'Refresh',
         refreshTitle: 'Read the current state again',
+        loadOlder: 'Load older',
+        loadingOlder: 'Loading…',
+        allDays: 'All',
+        guardRejected: 'blocked by guard',
+        toolRejected: 'refused by tool',
         born: 'Born',
         openPage: 'The fact timeline lives on the 晓 panel in the left sidebar.',
         note: 'Read-only. State changes go through the xiao_update tool in chat.',
@@ -144,6 +154,7 @@ window.__ModuleLoader__.load({
       text: 'var(--dsw-alias-label-primary)',
       dim: 'var(--dsw-alias-label-secondary)',
       line: 'var(--dsw-alias-border-l1)',
+      base: 'var(--dsw-alias-bg-base)',
       warn: 'var(--dsw-alias-state-warn-primary)',
       error: 'var(--dsw-alias-state-error-primary)',
       brand: 'var(--dsw-alias-brand-primary)',
@@ -244,27 +255,79 @@ window.__ModuleLoader__.load({
       );
     }
 
+    const DAY_MS = 86_400_000;
+
     function startOfDay(ms) {
       const date = new Date(ms);
       date.setHours(0, 0, 0, 0);
       return date.getTime();
     }
 
-    /** People read a log as today / yesterday / a date, never as a raw timestamp. */
-    function fmtWhen(ms, lang) {
-      if (!Number.isFinite(ms)) return '';
+    function dayKey(ms) {
       const date = new Date(ms);
-      const days = Math.round((startOfDay(Date.now()) - startOfDay(ms)) / 86_400_000);
-      const hh = String(date.getHours()).padStart(2, '0');
-      const mm = String(date.getMinutes()).padStart(2, '0');
-      if (days === 0) return `${lang === 'zh' ? '今天' : 'today'} ${hh}:${mm}`;
-      if (days === 1) return `${lang === 'zh' ? '昨天' : 'yesterday'} ${hh}:${mm}`;
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    }
+
+    function clock(ms) {
+      const date = new Date(ms);
+      return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+    }
+
+    /** Day label: today / yesterday / a date. The clock time lives on each row. */
+    function dayTitle(ms, lang) {
+      const days = Math.round((startOfDay(Date.now()) - startOfDay(ms)) / DAY_MS);
+      if (days === 0) return lang === 'zh' ? '今天' : 'Today';
+      if (days === 1) return lang === 'zh' ? '昨天' : 'Yesterday';
+      const date = new Date(ms);
       const md = `${date.getMonth() + 1}-${String(date.getDate()).padStart(2, '0')}`;
-      return days < 365 ? `${md} ${hh}:${mm}` : `${date.getFullYear()}-${md} ${hh}:${mm}`;
+      return days < 365 ? md : `${date.getFullYear()}-${md}`;
     }
 
     function shortSeq(seq) {
       return `#${String(seq).slice(-5)}`;
+    }
+
+    function snippet(fact, dict) {
+      const data = fact?.data ?? {};
+      switch (fact?.kind) {
+        case 'event':
+        case 'user_fact':
+        case 'health':
+          return String(data.text ?? '').slice(0, 24);
+        case 'job':
+          return String(data.job ?? '');
+        case 'override':
+          return `${dict.fields[data.field] ?? data.field}=${data.value}`;
+        case 'birth':
+          return dict.kinds.birth;
+        default:
+          return String(fact?.kind ?? '');
+      }
+    }
+
+    function describe(fact, dict, bySeq) {
+      const data = fact?.data ?? {};
+      switch (fact?.kind) {
+        case 'birth':
+          return '—';
+        case 'event':
+        case 'user_fact':
+        case 'health':
+          return data.text ?? '';
+        case 'job':
+          return `${data.job ?? ''}（${data.category ?? ''}）`;
+        case 'override':
+          return `${dict.fields[data.field] ?? data.field} = ${data.value}`;
+        case 'tombstone': {
+          const target = bySeq?.get(data.targetSeq);
+          if (!target || target.kind === 'tombstone') return shortSeq(data.targetSeq);
+          return `${dict.kinds[target.kind] ?? target.kind}「${snippet(target, dict)}」`;
+        }
+        case 'rejected':
+          return `${data.action ?? ''} · ${dict.codes[data.code] ?? data.code ?? ''}`;
+        default:
+          return '';
+      }
     }
 
     function row(key, label, value) {
@@ -294,30 +357,8 @@ window.__ModuleLoader__.load({
       );
     }
 
-    function describe(fact, dict) {
-      const data = fact?.data ?? {};
-      switch (fact?.kind) {
-        case 'birth':
-          return `seed ${String(data.seed ?? '').slice(0, 8)}…`;
-        case 'event':
-        case 'user_fact':
-        case 'health':
-          return data.text ?? '';
-        case 'job':
-          return `${data.job ?? ''}（${data.category ?? ''}）`;
-        case 'override':
-          return `${dict.fields[data.field] ?? data.field} = ${data.value}`;
-        case 'tombstone':
-          return `${dict.kinds.tombstone} ${shortSeq(data.targetSeq)}`;
-        case 'rejected':
-          return `${data.action ?? ''} · ${dict.codes[data.code] ?? data.code ?? ''}`;
-        default:
-          return '';
-      }
-    }
-
     function TimelineList(props) {
-      const { facts, dict, lang } = props;
+      const { facts, dict, bySeq } = props;
       return h(
         'ul',
         { style: { listStyle: 'none', margin: 0, padding: 0 } },
@@ -328,24 +369,27 @@ window.__ModuleLoader__.load({
               key: String(fact.seq),
               style: {
                 display: 'flex',
-                gap: 12,
+                gap: 10,
                 alignItems: 'baseline',
-                padding: '8px 0',
+                padding: '7px 0',
                 borderBottom: `1px solid ${C.line}`,
                 fontSize: 13,
               },
             },
+            h('span', { style: { color: C.dim, fontSize: 11, minWidth: 34 } }, clock(fact.at)),
             h(
               'span',
-              { style: { color: C.dim, fontSize: 12, minWidth: 96, whiteSpace: 'nowrap' } },
-              fmtWhen(fact.at, lang),
-            ),
-            h(
-              'span',
-              { style: { color: C.dim, fontSize: 11, minWidth: 66, textTransform: 'uppercase' } },
+              { style: { color: C.dim, fontSize: 11, minWidth: 62, textTransform: 'uppercase' } },
               dict.kinds[fact.kind] ?? fact.kind,
             ),
-            h('span', { style: { color: C.text, flex: 1 } }, describe(fact, dict)),
+            h(
+              'span',
+              {
+                title: fact.kind === 'birth' ? `seed ${fact?.data?.seed ?? ''}` : undefined,
+                style: { color: C.text, flex: 1 },
+              },
+              describe(fact, dict, bySeq),
+            ),
             fact.kind === 'event'
               ? h(
                   'span',
@@ -361,11 +405,18 @@ window.__ModuleLoader__.load({
                   dict.simulated,
                 )
               : null,
+            fact.kind === 'rejected'
+              ? h(
+                  'span',
+                  { style: { color: C.dim, fontSize: 11 } },
+                  fact.source === 'guard' ? dict.guardRejected : dict.toolRejected,
+                )
+              : null,
             h(
               'span',
               {
                 title: String(fact.seq),
-                style: { color: C.dim, fontSize: 11, opacity: 0.7, minWidth: 52, textAlign: 'right' },
+                style: { color: C.dim, fontSize: 11, opacity: 0.7, minWidth: 46, textAlign: 'right' },
               },
               shortSeq(fact.seq),
             ),
@@ -375,11 +426,12 @@ window.__ModuleLoader__.load({
     }
 
     function Chip(props) {
-      const { active, onClick, children } = props;
+      const { active, onClick, children, title } = props;
       return h(
         'button',
         {
           type: 'button',
+          title,
           'aria-pressed': active,
           onClick,
           style: {
@@ -388,6 +440,7 @@ window.__ModuleLoader__.load({
             fontSize: 12,
             padding: '2px 9px',
             borderRadius: 999,
+            whiteSpace: 'nowrap',
             border: `1px solid ${C.line}`,
             background: active ? C.layer : 'transparent',
             color: active ? C.text : C.dim,
@@ -413,9 +466,44 @@ window.__ModuleLoader__.load({
       const lang = useLang(ctx);
       const dict = DICT[lang] ?? DICT.zh;
       const { state, reload } = useFeed('api/xiao.state');
+      const [older, setOlder] = React.useState([]);
+      const [loadingOlder, setLoadingOlder] = React.useState(false);
       const [hidden, setHidden] = React.useState(() => new Set(['rejected']));
+      const [dayFilter, setDayFilter] = React.useState(null);
 
-      const toggle = (kind) =>
+      // A fresh read supersedes every older page that was loaded.
+      const readRevision = state.status === 'ready' ? state.value : null;
+      React.useEffect(() => {
+        setOlder([]);
+      }, [readRevision]);
+
+      const value = state.status === 'ready' ? state.value ?? {} : null;
+      const facts = React.useMemo(() => {
+        const map = new Map();
+        for (const fact of value?.facts ?? []) map.set(fact.seq, fact);
+        for (const fact of older) if (!map.has(fact.seq)) map.set(fact.seq, fact);
+        return [...map.values()].sort((a, b) => a.seq - b.seq);
+      }, [value, older]);
+
+      const bySeq = React.useMemo(() => new Map(facts.map((fact) => [fact.seq, fact])), [facts]);
+      const total = Number.isFinite(value?.factsTotal) ? value.factsTotal : facts.length;
+      const hasMore = facts.length < total;
+
+      const loadOlder = () => {
+        if (loadingOlder || facts.length === 0) return;
+        setLoadingOlder(true);
+        fetch(`api/xiao.state?before=${facts[0].seq}&limit=200`, {
+          headers: { accept: 'application/json', 'x-xiao-client': 'settings' },
+        })
+          .then((response) => (response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`))))
+          .then((page) => {
+            if (Array.isArray(page.facts) && page.facts.length > 0) setOlder((current) => [...page.facts, ...current]);
+          })
+          .catch(() => {})
+          .then(() => setLoadingOlder(false));
+      };
+
+      const toggleKind = (kind) =>
         setHidden((current) => {
           const next = new Set(current);
           if (next.has(kind)) next.delete(kind);
@@ -423,91 +511,175 @@ window.__ModuleLoader__.load({
           return next;
         });
 
-      const header = (facts) =>
-        h(
-          'div',
-          { style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 } },
-          h('h2', { style: { margin: 0, fontSize: 18, fontWeight: 600, color: C.text } }, dict.timeline),
-          facts ? h('span', { style: { color: C.dim, fontSize: 12 } }, `${facts.length} ${dict.unit}`) : null,
-          h('span', { style: { flex: 1 } }),
-          h(
-            'button',
-            {
-              type: 'button',
-              onClick: reload,
-              title: dict.refreshTitle,
-              style: {
-                cursor: 'pointer',
-                font: 'inherit',
-                fontSize: 12,
-                padding: '3px 10px',
-                borderRadius: 6,
-                border: `1px solid ${C.line}`,
-                background: 'transparent',
-                color: C.dim,
-              },
-            },
-            dict.refresh,
-          ),
-        );
-
       let body;
       if (state.status === 'loading') {
         body = h('div', { style: { color: C.dim, fontSize: 13, padding: '24px 0' } }, dict.loading);
       } else if (state.status === 'error') {
         body = h('div', { style: { color: C.error, fontSize: 13, padding: '24px 0', lineHeight: 1.7 } }, errorText(state, dict));
+      } else if (!value?.ready) {
+        body = h('div', { style: { color: C.dim, fontSize: 13, padding: '24px 0' } }, dict.emptyChat);
       } else {
-        const value = state.value ?? {};
-        if (!value.ready) {
-          body = h('div', { style: { color: C.dim, fontSize: 13, padding: '24px 0' } }, dict.emptyChat);
-        } else {
-          const facts = Array.isArray(value.facts) ? value.facts : [];
-          const counts = new Map();
-          for (const fact of facts) counts.set(fact.kind, (counts.get(fact.kind) ?? 0) + 1);
-          const kinds = [...counts.keys()].sort((a, b) => counts.get(b) - counts.get(a));
-          const visible = facts
-            .filter((fact) => !hidden.has(fact.kind))
-            .slice()
-            .reverse()
-            .slice(0, 200);
+        const kindCounts = new Map();
+        for (const fact of facts) kindCounts.set(fact.kind, (kindCounts.get(fact.kind) ?? 0) + 1);
+        const kinds = [...kindCounts.keys()].sort((a, b) => kindCounts.get(b) - kindCounts.get(a));
 
-          body = h(
+        const dayCounts = new Map();
+        for (const fact of facts) {
+          const key = dayKey(fact.at);
+          dayCounts.set(key, (dayCounts.get(key) ?? 0) + 1);
+        }
+        const days = [...dayCounts.keys()].sort().slice(-30);
+
+        const visible = facts
+          .filter((fact) => !hidden.has(fact.kind))
+          .filter((fact) => !dayFilter || dayKey(fact.at) === dayFilter)
+          .slice()
+          .reverse();
+
+        const groups = [];
+        for (const fact of visible) {
+          const key = dayKey(fact.at);
+          const last = groups[groups.length - 1];
+          if (!last || last.key !== key) groups.push({ key, at: fact.at, facts: [fact] });
+          else last.facts.push(fact);
+        }
+
+        body = h(
+          'div',
+          null,
+          h(
             'div',
-            null,
-            header(facts),
-            h('div', { style: { color: C.dim, fontSize: 12, marginBottom: 10 } }, dict.pageHint),
-            kinds.length > 1
-              ? h(
-                  'div',
-                  { style: { display: 'flex', flexWrap: 'wrap', gap: 6, margin: '0 0 10px' } },
-                  kinds.map((kind) =>
-                    h(
-                      Chip,
-                      { key: kind, active: !hidden.has(kind), onClick: () => toggle(kind) },
-                      `${dict.kinds[kind] ?? kind} ${counts.get(kind)}`,
-                    ),
+            { style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 } },
+            h('h2', { style: { margin: 0, fontSize: 18, fontWeight: 600, color: C.text } }, dict.timeline),
+            h('span', { style: { color: C.dim, fontSize: 12 } }, `${total} ${dict.unit}`),
+            h('span', { style: { flex: 1 } }),
+            h(
+              'button',
+              {
+                type: 'button',
+                onClick: reload,
+                title: dict.refreshTitle,
+                style: {
+                  cursor: 'pointer',
+                  font: 'inherit',
+                  fontSize: 12,
+                  padding: '3px 10px',
+                  borderRadius: 6,
+                  border: `1px solid ${C.line}`,
+                  background: 'transparent',
+                  color: C.dim,
+                },
+              },
+              dict.refresh,
+            ),
+          ),
+          h('div', { style: { color: C.dim, fontSize: 12, marginBottom: 10 } }, dict.pageHint),
+          kinds.length > 1
+            ? h(
+                'div',
+                { style: { display: 'flex', flexWrap: 'wrap', gap: 6, margin: '0 0 8px' } },
+                kinds.map((kind) =>
+                  h(
+                    Chip,
+                    { key: kind, active: !hidden.has(kind), onClick: () => toggleKind(kind) },
+                    `${dict.kinds[kind] ?? kind} ${kindCounts.get(kind)}`,
                   ),
-                )
-              : null,
-            visible.length === 0
-              ? h(
-                  'div',
-                  { style: { color: C.dim, fontSize: 13, padding: '12px 0' } },
-                  facts.length === 0 ? dict.emptyChat : dict.emptyFiltered,
-                )
-              : h(
-                  'div',
-                  null,
+                ),
+              )
+            : null,
+          days.length > 1
+            ? h(
+                'div',
+                {
+                  style: {
+                    display: 'flex',
+                    gap: 6,
+                    overflowX: 'auto',
+                    paddingBottom: 6,
+                    marginBottom: 10,
+                    borderBottom: `1px solid ${C.line}`,
+                  },
+                },
+                h(Chip, { key: 'all', active: !dayFilter, onClick: () => setDayFilter(null) }, dict.allDays),
+                days.map((key) =>
+                  h(
+                    Chip,
+                    {
+                      key,
+                      active: dayFilter === key,
+                      title: key,
+                      onClick: () => setDayFilter(dayFilter === key ? null : key),
+                    },
+                    `${key.slice(5)} · ${dayCounts.get(key)}`,
+                  ),
+                ),
+              )
+            : null,
+          h(
+            'div',
+            { style: { color: C.dim, fontSize: 11, marginBottom: 4 } },
+            `${dict.shown} ${visible.length} / ${dict.total} ${facts.length}`,
+          ),
+          groups.length === 0
+            ? h(
+                'div',
+                { style: { color: C.dim, fontSize: 13, padding: '16px 0' } },
+                facts.length === 0 ? dict.emptyChat : dict.emptyFiltered,
+              )
+            : h(
+                'div',
+                null,
+                groups.map((group) =>
                   h(
                     'div',
-                    { style: { color: C.dim, fontSize: 11, marginBottom: 4 } },
-                    `${dict.shown} ${visible.length} / ${dict.total} ${facts.length}`,
+                    { key: group.key },
+                    h(
+                      'div',
+                      {
+                        style: {
+                          position: 'sticky',
+                          top: 0,
+                          zIndex: 1,
+                          display: 'flex',
+                          gap: 8,
+                          alignItems: 'baseline',
+                          padding: '8px 0 6px',
+                          background: C.base,
+                          borderBottom: `1px solid ${C.line}`,
+                        },
+                      },
+                      h('span', { style: { fontSize: 12, fontWeight: 600, color: C.text } }, dayTitle(group.at, lang)),
+                      h('span', { style: { fontSize: 11, color: C.dim } }, String(group.facts.length)),
+                    ),
+                    h(TimelineList, { facts: group.facts, dict, bySeq }),
                   ),
-                  h(TimelineList, { facts: visible, dict, lang }),
                 ),
-            h('div', { style: { color: C.dim, fontSize: 12, marginTop: 16 } }, dict.note),
-          );
-        }
+              ),
+          hasMore
+            ? h(
+                'button',
+                {
+                  type: 'button',
+                  onClick: loadOlder,
+                  disabled: loadingOlder,
+                  style: {
+                    marginTop: 14,
+                    cursor: loadingOlder ? 'default' : 'pointer',
+                    font: 'inherit',
+                    fontSize: 12,
+                    padding: '5px 14px',
+                    borderRadius: 8,
+                    border: `1px solid ${C.line}`,
+                    background: 'transparent',
+                    color: C.dim,
+                    opacity: loadingOlder ? 0.6 : 1,
+                  },
+                },
+                loadingOlder ? dict.loadingOlder : dict.loadOlder,
+              )
+            : null,
+          h('div', { style: { color: C.dim, fontSize: 12, marginTop: 16 } }, dict.note),
+        );
       }
 
       return h(
@@ -550,7 +722,7 @@ window.__ModuleLoader__.load({
         row('age', dict.fields.age, String(identity.age ?? '—')),
         row('job', dict.fields.job, identity.job ?? '—'),
         row('tone', dict.fields.tone, value.tone ?? '—'),
-        Number.isFinite(value.bornAt) ? row('born', dict.born, fmtWhen(value.bornAt, lang)) : null,
+        Number.isFinite(value.bornAt) ? row('born', dict.born, dayTitle(value.bornAt, lang)) : null,
         heading('h-traits', dict.traits),
         row('outlook', dict.fields.outlook, traits.outlook ?? '—'),
         row('curiosity', dict.fields.curiosity, traits.curiosity ?? '—'),
