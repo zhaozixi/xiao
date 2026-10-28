@@ -237,13 +237,15 @@ function timeScenario(index) {
     return fact;
   };
 
-  // An age correction re-anchors the timeline instead of freezing it.
+  // An age correction re-anchors the timeline instead of freezing it. It happens "now"
+  // rather than yesterday: a correction made the day before her birthday legitimately
+  // reads one year older the next morning, which would make this an ambiguous test.
   const base = fold(facts, {}, now);
   const target = Math.min(60, base.age + 4);
   const planned = planUpdate({ action: 'set_age', age: target, confirmed: true }, base, facts);
   if (!planned.ok) problems.push(`age: refused with ${planned.code}`);
   else {
-    push('override', planned.data, now - DAY);
+    push('override', planned.data, now);
     const corrected = fold(facts, {}, now);
     if (corrected.age !== target) problems.push(`age: expected ${target}, got ${corrected.age}`);
     const yearAfter = fold(facts, {}, now + 365 * DAY);
