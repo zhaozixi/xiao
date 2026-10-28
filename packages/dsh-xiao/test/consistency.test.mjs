@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { CATALOG, RULES_VERSION, fold, generateLife, suggestTransition } from '../persona.js';
+import { CATALOG, RULES_VERSION, catchupWindow, fold, generateLife, suggestTransition } from '../persona.js';
 
 const DAY = 86_400_000;
 const NOW = new Date(2026, 9, 28, 15, 0).getTime();
@@ -73,4 +73,27 @@ test('a job fact makes the same view decided, with no config change', () => {
   assert.equal(view.jobChosen, true);
   assert.ok(view.work && view.work.name);
   assert.equal(view.job, '在书店做店员');
+});
+
+// ---------------------------------------------------------------------------
+// Catching up is a ledger, not a single jump
+// ---------------------------------------------------------------------------
+
+test('a long absence is caught up in one bounded slice, ending yesterday', () => {
+  const today = 20_000;
+  const window = catchupWindow(today - 1_000, today, 120);
+  assert.equal(window.to, today - 1, 'the run always reaches yesterday');
+  assert.equal(window.to - window.from + 1, 120, 'and covers at most the cap');
+
+  // Anything older than the cap is abandoned on purpose: it can never be shown anyway.
+  assert.ok(window.from > today - 1_000 + 1);
+
+  // Once yesterday is pinned there is nothing left to do, and nothing to rewrite.
+  assert.equal(catchupWindow(today - 1, today, 120), undefined);
+});
+
+test('a short gap only pins the missing days', () => {
+  const today = 20_000;
+  const window = catchupWindow(today - 3, today, 120);
+  assert.deepEqual(window, { from: today - 2, to: today - 1 });
 });

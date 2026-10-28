@@ -920,6 +920,28 @@ export function renderNow(moment, cfg) {
 }
 
 /**
+ * The slice of days a single catch-up run should pin: the missing days, capped so a very
+ * long absence cannot write hundreds of facts at once.
+ *
+ * Days older than the cap are **deliberately abandoned**, not queued for later: the
+ * generator never looks further back than its own window (60 days), so those days can
+ * never surface in a prompt. Pretending to catch them up would only cost writes.
+ * @param {number} lastDay - the last day already synced (epoch day).
+ * @param {number} today - today, as an epoch day.
+ * @param {number} maxDays - how many days one run may cover.
+ * @returns {{from: number, to: number}|undefined} the slice, or undefined when caught up.
+ */
+export function catchupWindow(lastDay, today, maxDays) {
+  const max = clamp(Math.floor(Number(maxDays) || 0), 1, 2000);
+  const yesterday = today - 1;
+  const first = Number.isFinite(lastDay) ? lastDay + 1 : today;
+  const from = Math.max(first, yesterday - max + 1);
+  const to = yesterday;
+  if (to < from) return undefined;
+  return { from, to };
+}
+
+/**
  * Tone is a pure function of the committed events — never stored, so it can never
  * drift away from what actually happened.
  * @param {object[]} events - committed events.

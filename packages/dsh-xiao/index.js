@@ -25,6 +25,7 @@ import {
   generateLife,
   isPlainObject,
   planUpdate,
+  catchupWindow,
   renderCard,
   renderNow,
   renderResearch,
@@ -223,6 +224,11 @@ export function apply(ctx, config) {
    * speaks and never changes the job — it only pins days that are already over.
    */
   let lifeSyncTask;
+  /**
+   * How many days one catch-up run may pin. Like a ledger being brought up to date in
+   * pages: a long absence is covered over several activations instead of never.
+   */
+  const CATCHUP_DAYS = 120;
   const syncLife = () => {
     if (lifeSyncTask) return lifeSyncTask;
     lifeSyncTask = (async () => {
@@ -235,10 +241,10 @@ export function apply(ctx, config) {
         const flags = state.domain.table('flags');
         const marker = flags.get('lifeSynced');
         const last = marker && Number.isFinite(marker.day) ? marker.day : birthDay;
-        const from = Math.max(last + 1, today - 60);
-        const to = today - 1;
-        if (to < from) return;
-        const days = today - from + 1;
+        const window = catchupWindow(last, today, CATCHUP_DAYS);
+        if (!window) return;
+        const { from, to } = window;
+        const days = to - from + 1;
         const result = generateLife({ seed: view.seed, view, cfg, days, now: Date.now() });
         const known = new Set((view.eventsAll ?? []).map((event) => event.id));
         const pending = result.events.filter(
@@ -434,11 +440,22 @@ export function apply(ctx, config) {
   }
 
   /**
-   * Record a refused mutation in the fact log. Synchronous callers (the guard) queue
-   * it on a microtask; a refusal that cannot be recorded is reported, not swallowed.
+   * Record a refused mutation in the fact log. Synchronous callers (the guard) queue it
+   * on a microtask; a refusal that cannot be recorded is reported, not swallowed.
+   *
+   * Identical refusals within ten minutes are recorded once: a model that keeps calling
+   * with the same bad arguments must not grow the log without bound, and the log is
+   * append-only, so pruning is not an option.
    */
+  const recentRejections = new Map();
+  const REJECTION_TTL = 10 * 60 * 1000;
   const recordRejection = (entry) => {
     if (!state.domain) return;
+    const key = `${entry.tool}|${entry.action}|${entry.code}`;
+    const now = Date.now();
+    const seenAt = recentRejections.get(key);
+    if (seenAt !== undefined && now - seenAt < REJECTION_TTL) return;
+    recentRejections.set(key, now);
     queueMicrotask(() => {
       writeFact('rejected', entry, 'guard', 'confirmed').catch((error) => {
         log('warn', `could not record a rejection: ${error?.message ?? error}`);
