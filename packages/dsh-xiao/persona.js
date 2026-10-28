@@ -146,7 +146,13 @@ const INTERESTS = [
   '编织',
 ];
 
-const PARTNER_DETAIL = ['在一起三年了', '刚搬到一起住', '总提醒按时吃饭'];
+/**
+ * Partner descriptions are not a fixed pool any more: the sentence depends on how long
+ * they have been together, which follows from her age. These are the two branches.
+ */
+const PARTNER_DETAIL_SHORT = ['刚搬到一起住'];
+const PARTNER_DETAIL_LONG = ['在一起很多年了', '总提醒按时吃饭'];
+const PARTNER_SPELLED = { 1: '一年', 2: '两年', 3: '三年' };
 /**
  * How a child is described depends on how old the child is now. A 24-year-old daughter
  * cannot be "在老家由父母带着"; that sentence describes a small child.
@@ -299,10 +305,10 @@ function deriveRelations(rnd, jobCategory, age, shape = {}) {
     const together = Math.max(1, age - partnerAge);
     let partnerPool;
     if (together <= 3) {
-      const spelled = { 1: '一年', 2: '两年', 3: '三年' }[together] ?? `${together} 年`;
-      partnerPool = [`在一起${spelled}了`, '刚搬到一起住'];
+      const spelled = PARTNER_SPELLED[together] ?? `${together} 年`;
+      partnerPool = [`在一起${spelled}了`, ...PARTNER_DETAIL_SHORT];
     } else {
-      partnerPool = ['在一起很多年了', '总提醒按时吃饭'];
+      partnerPool = [...PARTNER_DETAIL_LONG];
     }
     if (hasChild) partnerPool = partnerPool.filter((detail) => detail !== '刚搬到一起住');
     relations.push({ id: 'partner', kind: 'partner', role: '伴侣', name: anyName(), detail: pick(rnd, partnerPool) });
@@ -1703,7 +1709,7 @@ export const CATALOG = {
     friend: { roles: FRIEND_ROLES, detail: FRIEND_DETAIL },
     work: { office: WORK_RELATIONS_OFFICE, remote: WORK_RELATIONS_REMOTE },
     classmate: { roles: CLASS_ROLES, detail: CLASS_DETAIL },
-    partnerDetail: PARTNER_DETAIL,
+    partnerDetail: { short: PARTNER_DETAIL_SHORT, long: PARTNER_DETAIL_LONG, spelled: PARTNER_SPELLED },
     childDetail: { young: CHILD_DETAIL_YOUNG, kid: CHILD_DETAIL_KID, teen: CHILD_DETAIL_TEEN, adult: CHILD_DETAIL_ADULT },
   },
   places: { areas: AREAS, homeDetail: HOME_DETAIL, nearby: NEARBY, commute: COMMUTE },

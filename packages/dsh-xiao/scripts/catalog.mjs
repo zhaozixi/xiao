@@ -98,7 +98,12 @@ table(
     ['同学（学生）', list(CATALOG.relations.classmate.roles), list(CATALOG.relations.classmate.detail)],
     ['同事（在职、坐班）', pairList(CATALOG.relations.work.office), '角色与细节成对抽取'],
     ['合作方（在职、自由职业）', pairList(CATALOG.relations.work.remote), '角色与细节成对抽取'],
-    ['伴侣（25+，约 45%）', '与她自己性别相反的取名池', list(CATALOG.relations.partnerDetail)],
+    [
+      '伴侣（25+，约 45%）· 在一起 ≤3 年',
+      '与她自己性别相反的取名池',
+      `在一起{N}年了（N 按时长写成一/两/三年）、${list(CATALOG.relations.partnerDetail.short)}`,
+    ],
+    ['　同上 · 3 年以上', '', list(CATALOG.relations.partnerDetail.long)],
     ['孩子（32+ 且有伴侣，约 40%）幼年', '女儿 / 儿子', list(CATALOG.relations.childDetail.young)],
     ['　同上 · 学龄', '', list(CATALOG.relations.childDetail.kid)],
     ['　同上 · 少年', '', list(CATALOG.relations.childDetail.teen)],
