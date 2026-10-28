@@ -128,10 +128,19 @@ export function apply(ctx, config) {
   const firstMessageSeen = new Set();
   const introPending = new Set();
   let counter = 0;
+  let lastSeq = 0;
 
+  /**
+   * A strictly increasing sequence number. The wall clock can jump backwards (NTP, a
+   * timezone-less VM resuming from sleep); if it did, a later fact would sort before an
+   * earlier one and the fold would replay history out of order. The counter keeps seq
+   * monotonic no matter what the clock does.
+   */
   const nextSeq = () => {
     counter = (counter + 1) % 1000;
-    return Date.now() * 1000 + counter;
+    const candidate = Date.now() * 1000 + counter;
+    lastSeq = candidate > lastSeq ? candidate : lastSeq + 1;
+    return lastSeq;
   };
 
   const log = (level, message) => {

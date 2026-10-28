@@ -566,6 +566,8 @@ function socialLine(view) {
  */
 export function suggestTransition(view, events) {
   const list = Array.isArray(events) ? events : [];
+  // No job, nothing to transition away from.
+  if (view?.jobChosen === false) return undefined;
   if (view?.jobCategory === 'job_seeking') {
     const interview = list.find((event) => typeof event?.text === 'string' && /面试|面了/.test(event.text));
     if (interview) {
@@ -968,7 +970,8 @@ function generateWeek(seed, week, view, cap) {
   const rnd = mulberry32(hashString(`${seed}#w${week}`));
   const count = 1 + Math.floor(rnd() * cap);
   const pool = [
-    ...(LIFE_TEMPLATES[view?.jobCategory] ?? []),
+    // Someone who has not chosen a job yet must not get job-flavoured weeks.
+    ...(view?.jobChosen === false ? [] : (LIFE_TEMPLATES[view?.jobCategory] ?? [])),
     ...LIFE_TEMPLATES.any,
     ...LOCAL_TEMPLATES,
     ...SOCIAL_TEMPLATES,
@@ -1197,6 +1200,9 @@ export function fold(records, cfg, now) {
       notes.push(String(fact.data.text ?? ''));
     }
   }
+
+  // With the feature switched off, the seed's job counts as decided: no "undecided" leaks.
+  if (cfg?.chooseOwnJob === false) jobChosen = true;
 
   const months = Math.max(0, (now - birthAt) / MONTH_MS);
   const growth = clamp(Number(cfg?.growthPerMonth ?? 1 / 12), 1 / 12, 1 / 4);

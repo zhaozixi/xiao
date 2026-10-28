@@ -15,7 +15,7 @@ function viewOf(jobCategory) {
     evidence: 'confirmed',
   };
   const view = fold([birth], {}, START);
-  return { ...view, jobCategory };
+  return { ...view, jobCategory, jobChosen: true };
 }
 
 function event(text, kind = 'work', id = '1.0') {
