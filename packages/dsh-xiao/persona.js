@@ -275,6 +275,10 @@ function deriveRelations(rnd, jobCategory, age, shape = {}) {
     return fallback;
   };
   const anyName = () => nextFrom(rnd() < 0.5 ? GIVEN_FEMALE : GIVEN_MALE);
+  // A partner's name has to come from the opposite pool: a male character's partner is not
+  // called 高磊. The catalogue already promised this; the code did not keep the promise.
+  const partnerNamePool = shape.gender === 'male' ? GIVEN_FEMALE : GIVEN_MALE;
+  const partnerName = () => nextFrom(partnerNamePool);
   const parentPool = shape.moved ? PARENT_DETAIL_AWAY : PARENT_DETAIL_STAYED;
 
   const motherDetail = pick(rnd, parentPool);
@@ -312,7 +316,7 @@ function deriveRelations(rnd, jobCategory, age, shape = {}) {
       partnerPool = [...PARTNER_DETAIL_LONG];
     }
     if (hasChild) partnerPool = partnerPool.filter((detail) => detail !== '刚搬到一起住');
-    relations.push({ id: 'partner', kind: 'partner', role: '伴侣', name: anyName(), detail: pick(rnd, partnerPool) });
+    relations.push({ id: 'partner', kind: 'partner', role: '伴侣', name: partnerName(), detail: pick(rnd, partnerPool) });
     if (hasChild) {
       const girl = rnd() < 0.5;
       const childAge = Math.max(0, age - childBornAt);
@@ -465,6 +469,7 @@ export function derivePersona(seed) {
     remote: chosen.job.includes('自由'),
     partnerAge,
     childBornAt,
+    gender: gender.key,
   });
   // Three interests, drawn without replacement, so two of them can never be the same.
   const interests = [];

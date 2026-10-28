@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { RULES_VERSION, derivePersona, fold, generateLife, planUpdate, renderCard } from '../persona.js';
+import { CATALOG, RULES_VERSION, derivePersona, fold, generateLife, planUpdate, renderCard } from '../persona.js';
 
 const START = Date.UTC(2026, 9, 28, 9, 32, 0);
 const YEAR = 365.25 * 24 * 60 * 60 * 1000;
@@ -71,6 +71,28 @@ test('nobody over forty is sharing a flat with roommates', () => {
     assert.ok(!persona.places.home.detail.includes('合租'), `${persona.age}: ${persona.places.home.detail}`);
   }
   assert.ok(checked > 5);
+});
+
+test('every name matches the role it belongs to', () => {
+  for (let index = 0; index < 60; index += 1) {
+    const persona = derivePersona(`name-seed-${index}`);
+    const female = new Set(CATALOG.givenNames.female);
+    const male = new Set(CATALOG.givenNames.male);
+    for (const relation of persona.relations) {
+      const given = relation.name.slice(1);
+      if (relation.id === 'mother' || relation.role === '女儿') {
+        assert.ok(female.has(given), `${relation.role} ${relation.name} needs a female name`);
+      }
+      if (relation.id === 'father' || relation.role === '儿子') {
+        assert.ok(male.has(given), `${relation.role} ${relation.name} needs a male name`);
+      }
+      if (relation.id === 'partner') {
+        // A partner's name comes from the pool opposite her own gender.
+        const pool = persona.gender === 'male' ? female : male;
+        assert.ok(pool.has(given), `${persona.gender}'s partner ${relation.name} has the wrong pool`);
+      }
+    }
+  }
 });
 
 test('a child is described at the age the child actually is', () => {

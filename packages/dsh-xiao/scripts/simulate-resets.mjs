@@ -10,7 +10,7 @@
  * Exit code 1 when any check fails, so it can gate a commit.
  */
 import { randomUUID } from 'node:crypto';
-import { RULES_VERSION, deriveDay, fold, looksTraditional, researchQuery, renderCard } from '../persona.js';
+import { CATALOG, RULES_VERSION, deriveDay, fold, looksTraditional, researchQuery, renderCard } from '../persona.js';
 
 const DAY = 86_400_000;
 const count = Math.max(1, Math.min(200, Number(process.argv[2]) || 10));
@@ -157,6 +157,27 @@ const checks = [
               ? /中学|不太爱说话|周末才回家/
               : /外地工作|过年才回来|偶尔打个电话/;
       return fits.test(laterChild.detail) ? null : `a month later, child aged ${childAge}: ${laterChild.detail}`;
+    },
+  },
+  {
+    name: 'every name matches the role it belongs to',
+    run(view) {
+      const female = new Set(CATALOG.givenNames.female);
+      const male = new Set(CATALOG.givenNames.male);
+      for (const relation of view.relations) {
+        const given = String(relation.name).slice(1);
+        const wantsFemale =
+          relation.id === 'mother' ||
+          relation.role === '女儿' ||
+          (relation.id === 'partner' && view.gender === 'male');
+        const wantsMale =
+          relation.id === 'father' ||
+          relation.role === '儿子' ||
+          (relation.id === 'partner' && view.gender === 'female');
+        if (wantsFemale && !female.has(given)) return `${relation.role} ${relation.name} should be a female name`;
+        if (wantsMale && !male.has(given)) return `${relation.role} ${relation.name} should be a male name`;
+      }
+      return null;
     },
   },
   {
