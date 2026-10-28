@@ -209,3 +209,50 @@ test('life events name the city she lives in and the people she knows', () => {
   );
   assert.ok(texts.every((text) => !text.includes('{city}') && !text.includes('{person}')), 'a placeholder leaked');
 });
+
+// ---------------------------------------------------------------------------
+// Where exactly
+// ---------------------------------------------------------------------------
+
+test('she has one flat, three familiar spots, and somewhere to be', () => {
+  const view = fold([birth('place-seed-2')], { growthPerMonth: 1 / 12 }, START);
+  assert.equal(view.home.city, view.currentCity);
+  assert.ok(view.home.area && view.home.detail);
+  assert.equal(view.nearby.length, 3);
+  assert.equal(new Set(view.nearby).size, 3, 'familiar spots must be distinct');
+  assert.ok(view.work && view.work.area, 'she needs a workplace or a school');
+  assert.ok(typeof view.commute === 'string' && view.commute.length > 0);
+  assert.deepEqual(fold([birth('place-seed-2')], { growthPerMonth: 1 / 12 }, START).home, view.home);
+});
+
+test('a familiar spot she mentions is appended, not replacing the others', () => {
+  const add = {
+    seq: 2,
+    at: START + 1,
+    kind: 'override',
+    data: { field: 'nearby', value: '街角的旧书店' },
+    source: 'model',
+    evidence: 'confirmed',
+  };
+  const before = fold([birth('place-seed-3')], { growthPerMonth: 1 / 12 }, START);
+  const after = fold([birth('place-seed-3'), add], { growthPerMonth: 1 / 12 }, START + 1);
+  assert.equal(after.nearby.length, before.nearby.length + 1);
+  assert.ok(after.nearby.includes('街角的旧书店'));
+  for (const spot of before.nearby) assert.ok(after.nearby.includes(spot), `${spot} disappeared`);
+
+  const repeat = fold([birth('place-seed-3'), add, { ...add, seq: 3 }], { growthPerMonth: 1 / 12 }, START + 2);
+  assert.equal(repeat.nearby.filter((spot) => spot === '街角的旧书店').length, 1, 'duplicates must collapse');
+});
+
+test('place refuses an empty or oversized spot', () => {
+  const view = fold([birth('place-seed-4')], { growthPerMonth: 1 / 12 }, START);
+  assert.equal(planUpdate({ action: 'place', text: '   ' }, view).code, 'missing_text');
+  assert.equal(planUpdate({ action: 'place', text: 'x'.repeat(41) }, view).code, 'text_too_long');
+  assert.equal(planUpdate({ action: 'place', text: '街角的旧书店' }, view).ok, true);
+});
+
+test('the card names the neighbourhood she lives in', () => {
+  const view = fold([birth('place-seed-5')], { growthPerMonth: 1 / 12 }, START);
+  const card = renderCard(view, { cardMaxChars: 400 });
+  assert.ok(card.includes(view.home.area), 'the neighbourhood is missing from the card');
+});

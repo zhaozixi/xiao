@@ -109,6 +109,57 @@ const CLASS_DETAIL = ['经常一起去图书馆', '这学期见面少了', '上�
 const PARTNER_DETAIL = ['在一起三年了', '刚搬到一起住', '总提醒她按时吃饭'];
 const CHILD_DETAIL = ['刚上幼儿园', '上小学二年级', '在老家由父母带着'];
 
+/** Where the day actually happens: a neighbourhood, a flat, a few familiar corners. */
+const AREAS = ['老城区', '新城区', '江边', '大学城旁边', '地铁沿线', '菜市场附近'];
+const HOME_DETAIL = ['一间朝北的一居室', '和别人合租的两居室', '顶楼带小阳台', '一楼，有点潮'];
+const NEARBY = [
+  '楼下的小卖部',
+  '街角的面馆',
+  '步行十分钟的公园',
+  '一家开到很晚的便利店',
+  '周末才去的菜市场',
+  '常去的咖啡馆',
+  '拐角的洗衣店',
+  '门口修车的大爷',
+];
+const COMMUTE = ['地铁三站，再走八分钟', '骑车二十分钟', '公交两站加一段路', '走路二十五分钟'];
+
+/**
+ * Anchor her to one flat and, when she has somewhere to be, one workplace plus the
+ * route between them. Deterministic; she can add more in conversation.
+ * @param {string} seed - instance seed.
+ * @param {string} city - where she lives now.
+ * @param {string} job - job label at birth.
+ * @param {string} jobCategory - its category.
+ * @returns {{home: object, work: object, commute: string, nearby: string[]}} places.
+ */
+export function derivePlaces(seed, city, job, jobCategory) {
+  const rnd = mulberry32(hashString(`${seed}#places`));
+  const area = pick(rnd, AREAS);
+  const home = { city, area, detail: pick(rnd, HOME_DETAIL) };
+
+  const nearby = [];
+  const pool = [...NEARBY];
+  while (nearby.length < 3 && pool.length > 0) {
+    nearby.push(pool.splice(Math.floor(rnd() * pool.length), 1)[0]);
+  }
+
+  const remote = typeof job === 'string' && job.includes('自由');
+  let work;
+  let commute = '';
+  if (jobCategory === 'student') {
+    work = { city, area: pick(rnd, AREAS), name: '学校', detail: '上课的日子基本都在那边' };
+    commute = '公交四十分钟';
+  } else if (remote) {
+    work = { city, area, name: '家里那张桌子', detail: '在家工作，没有通勤' };
+    commute = '没有通勤';
+  } else {
+    work = { city, area: pick(rnd, AREAS), name: '上班的地方', detail: '一周去五天' };
+    commute = pick(rnd, COMMUTE);
+  }
+  return { home, work, commute, nearby };
+}
+
 /**
  * The cast. Parents always exist; a partner and a child exist only when the seed says
  * so — they are plausible, not mandatory.
@@ -246,6 +297,7 @@ export function derivePersona(seed) {
     relations,
     currentCity,
     movedAt,
+    places: derivePlaces(seed, currentCity, chosen.job, chosen.category),
   };
 }
 
@@ -348,6 +400,13 @@ export function planUpdate(input, view, records = []) {
     return { ok: true, kind: 'override', data: { field: 'city', value: city }, source: 'user' };
   }
 
+  if (action === 'place') {
+    const text = typeof args.text === 'string' ? args.text.trim() : '';
+    if (text.length === 0) return { ok: false, code: 'missing_text', reason: 'text 不能为空' };
+    if (text.length > 40) return { ok: false, code: 'text_too_long', reason: 'text 超过 40 字' };
+    return { ok: true, kind: 'override', data: { field: 'nearby', value: text }, source: 'model' };
+  }
+
   if (action === 'set_age') {
     if (args.confirmed !== true) {
       return {
@@ -363,7 +422,7 @@ export function planUpdate(input, view, records = []) {
     return { ok: true, kind: 'override', data: { field: 'age', value: age }, source: 'user' };
   }
 
-  return { ok: false, code: 'unknown_action', reason: `未知 action：${action || '(空)'}；可选 set_job / move / remember / forget / set_age` };
+  return { ok: false, code: 'unknown_action', reason: `未知 action：${action || '(空)'}；可选 set_job / move / place / remember / forget / set_age` };
 }
 
 /**
@@ -408,11 +467,13 @@ export function renderCard(view, cfg) {
 function socialLine(view) {
   const city = typeof view?.birthCity === 'string' ? view.birthCity : '';
   const now = typeof view?.currentCity === 'string' && view.currentCity !== city ? view.currentCity : '';
+  const area = typeof view?.home?.area === 'string' ? view.home.area : '';
   const names = Array.isArray(view?.relations)
     ? view.relations.map((relation) => relation?.name).filter((name) => typeof name === 'string' && name.length > 0)
     : [];
-  const origin = now ? `出生在${city}，现在住在${now}` : `出生在${city}`;
   if (!city && names.length === 0) return '';
+  const here = now ? `${now}${area ? `的${area}` : ''}` : `${city}${area ? `的${area}` : ''}`;
+  const origin = now ? `出生在${city}，现在住在${here}` : `住在${here}`;
   if (names.length === 0) return `${origin}。`;
   return `${origin}；身边有${names.join('、')}。`;
 }
@@ -749,6 +810,7 @@ export function fold(records, cfg, now) {
 
   const base = derivePersona(birth.data.seed);
   const overrides = new Map();
+  const nearbyAdditions = [];
   const notes = [];
   const events = [];
   let job = base.job;
@@ -762,6 +824,13 @@ export function fold(records, cfg, now) {
         // A correction is a new starting point, not a permanent freeze: aging continues
         // from the moment the correction was made.
         ageCorrection = { value: Number(fact.data.value), at: fact.at };
+      }
+      // She may add a familiar spot in conversation; these append instead of replacing.
+      if (fact.data.field === 'nearby') {
+        const added = Array.isArray(fact.data.value) ? fact.data.value : [fact.data.value];
+        for (const item of added) {
+          if (typeof item === 'string' && item.trim().length > 0) nearbyAdditions.push(item.trim());
+        }
       }
     } else if (fact.kind === 'job') {
       if (typeof fact.data.job === 'string' && fact.data.job.length > 0) job = fact.data.job;
@@ -818,6 +887,10 @@ export function fold(records, cfg, now) {
     currentCity,
     relations: base.relations,
     lifeHistory,
+    home: base.places.home,
+    work: base.places.work,
+    commute: base.places.commute,
+    nearby: [...new Set([...base.places.nearby, ...nearbyAdditions])],
     job: overrides.has('job') ? String(overrides.get('job')) : job,
     jobCategory,
     outlook: base.outlook,

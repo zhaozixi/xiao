@@ -62,7 +62,12 @@ window.__ModuleLoader__.load({
           birthDate: '出生日期',
           birthCity: '出生地',
           currentCity: '现居',
+          home: '住处',
+          work: '工作地点',
+          commute: '通勤',
+          nearby: '附近常去',
         },
+        places: '住处与路线',
         relations: '身边的人',
         history: '大事记',
         kinds: {
@@ -145,7 +150,12 @@ window.__ModuleLoader__.load({
           birthDate: 'Born on',
           birthCity: 'Birthplace',
           currentCity: 'Lives in',
+          home: 'Home',
+          work: 'Workplace',
+          commute: 'Commute',
+          nearby: 'Around home',
         },
+        places: 'Home and route',
         relations: 'People around her',
         history: 'Life so far',
         kinds: {
@@ -783,6 +793,7 @@ window.__ModuleLoader__.load({
       const identity = value.identity ?? {};
       const traits = value.traits ?? {};
       const knows = Array.isArray(value.knows) ? value.knows : [];
+      const places = value.places ?? {};
 
       return h(
         'div',
@@ -805,6 +816,19 @@ window.__ModuleLoader__.load({
         row('currentCity', dict.fields.currentCity, identity.currentCity ?? '—'),
         row('job', dict.fields.job, identity.job ?? '—'),
         row('tone', dict.fields.tone, value.tone ?? '—'),
+        heading('h-places', dict.places),
+        row(
+          'home',
+          dict.fields.home,
+          `${places.home?.city ?? ''}${places.home?.area ? ` · ${places.home.area}` : ''}${places.home?.detail ? ` · ${places.home.detail}` : ''}` || '—',
+        ),
+        row(
+          'work',
+          dict.fields.work,
+          `${places.work?.name ?? ''}${places.work?.area ? `（${places.work.area}）` : ''}` || '—',
+        ),
+        row('commute', dict.fields.commute, places.commute || '—'),
+        row('nearby', dict.fields.nearby, Array.isArray(places.nearby) ? places.nearby.join('、') || '—' : '—'),
         heading('h-relations', dict.relations),
         Array.isArray(value.relations) && value.relations.length > 0
           ? h(
