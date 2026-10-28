@@ -644,6 +644,71 @@ function describeFact(fact) {
 }
 
 /**
+ * A local calendar date for display. `toISOString` would shift it by the timezone offset,
+ * which is how a memory from yesterday can look like tomorrow.
+ * @param {number} at - wall clock.
+ * @returns {string} `YYYY-MM-DD`.
+ */
+function localDateString(at) {
+  const date = new Date(at);
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+/**
+ * The records she can still be expected to know: not tombstoned, not disputed, not an
+ * expired temporary fact. Shared by the prompt and by search, so a fact cannot be hidden
+ * from the card and reachable through recall.
+ * @param {{records?: object[], cfg?: object, now?: number}} input - the raw log and config.
+ * @returns {object[]} the visible records.
+ */
+export function memoryRecords({ records = [], cfg = {}, now = Date.now() } = {}) {
+  const dead = new Set();
+  const disputed = new Set();
+  for (const record of Array.isArray(records) ? records : []) {
+    if (record?.kind === 'tombstone') dead.add(record.data?.targetSeq);
+    if (record?.kind === 'dispute') disputed.add(Number(record.data?.targetSeq));
+  }
+  const days = clamp(Math.floor(Number(cfg?.temporaryFactDays ?? 14)), 0, 365);
+  const cutoff = days > 0 ? now - days * DAY_MS : undefined;
+  return (Array.isArray(records) ? records : []).filter((record) => {
+    if (!record) return false;
+    if (record.kind === 'tombstone' || record.kind === 'dispute' || record.kind === 'rejected' || record.kind === 'birth') return false;
+    if (record.seq !== undefined && (dead.has(record.seq) || disputed.has(record.seq))) return false;
+    if (record.data?.temporary === true && cutoff !== undefined && record.at < cutoff) return false;
+    return true;
+  });
+}
+
+/**
+ * A tiny alias table, the offline-generated `A` of the memory design: the words people
+ * use when asking are not always the words stored. Deliberately small — every entry is a
+ * claim about Chinese usage that someone can argue with.
+ */
+const RECALL_ALIASES = {
+  工作: ['职业', '上班', '班'],
+  职业: ['工作'],
+  上班: ['工作', '职业'],
+  住在: ['搬到', '城市', '住处'],
+  住处: ['搬到', '住'],
+  搬家: ['搬到', '城市'],
+  城市: ['搬到', '住'],
+  兴趣: ['爱好'],
+  爱好: ['兴趣'],
+  身体: ['健康'],
+  宠物: ['猫', '狗'],
+  朋友: ['同学', '同事', '邻居'],
+};
+
+/** Every surface form worth matching for one token. */
+function aliasesOf(token) {
+  const forms = new Set([token]);
+  for (const extra of RECALL_ALIASES[token] ?? []) forms.add(extra);
+  return [...forms];
+}
+
+/**
  * Search what she could remember, without injecting it. This is the I_idx layer: the
  * prompt only tells her that recall exists; the entries live out here and are pulled on
  * demand.
@@ -657,9 +722,16 @@ export function searchMemory({ facts = [], notes = [], events = [], query = '', 
     .split(/[\s,，。；;、]+/)
     .filter((token) => token.length > 0);
   const bounded = clamp(Math.floor(Number(limit) || 3), 1, 8);
+  const queryGrams = new Set();
+  {
+    const clean = needle.replace(/[\s,，。；;、？?！!]+/g, '');
+    for (let index = 0; index + 1 < clean.length; index += 1) queryGrams.add(clean.slice(index, index + 2));
+  }
 
   const records = [];
   for (const fact of Array.isArray(facts) ? facts : []) {
+    // Life events are searched through the events source, not twice through the log.
+    if (fact?.kind === 'event') continue;
     const text = describeFact(fact);
     if (text) records.push({ id: `fact:${fact.seq}`, source: 'fact', kind: String(fact.kind), at: Number(fact.at) || 0, text });
   }
@@ -676,7 +748,25 @@ export function searchMemory({ facts = [], notes = [], events = [], query = '', 
 
   const scored = records.map((record) => {
     const haystack = record.text.toLowerCase();
-    const score = tokens.length === 0 ? 0 : tokens.filter((token) => haystack.includes(token)).length;
+    const direct =
+      tokens.length === 0
+        ? 0
+        : tokens.filter((token) => aliasesOf(token).some((form) => haystack.includes(form))).length;
+    // Chinese queries arrive as one phrase without spaces ("她从哪里搬过来的"), so a pure
+    // token match misses. Two fallbacks, cheapest first: shared character bigrams, then
+    // scanning the phrase for known alias keys (工作 / 住在 / 兴趣 ...).
+    let overlap = 0;
+    if (direct === 0 && queryGrams.size > 0) {
+      for (const gram of queryGrams) if (haystack.includes(gram)) overlap += 1;
+    }
+    let aliasHits = 0;
+    if (direct === 0 && overlap < 2) {
+      for (const [key, forms] of Object.entries(RECALL_ALIASES)) {
+        if (!needle.includes(key)) continue;
+        if ([key, ...forms].some((form) => haystack.includes(form))) aliasHits += 1;
+      }
+    }
+    const score = direct > 0 ? direct : overlap >= 2 ? overlap : aliasHits;
     return { record, score };
   });
   const matched = tokens.length === 0 ? scored : scored.filter((entry) => entry.score > 0);
@@ -690,6 +780,7 @@ export function searchMemory({ facts = [], notes = [], events = [], query = '', 
       source: record.source,
       kind: record.kind,
       at: record.at,
+      date: record.at ? localDateString(record.at) : '',
       summary: record.text.length > 60 ? `${record.text.slice(0, 60)}…` : record.text,
     })),
   };
@@ -1175,10 +1266,12 @@ export function generateLife({ seed, view, cfg, days = 7, now = Date.now() }) {
 
   const committed = new Map();
   for (const event of view?.eventsAll ?? []) if (event.id) committed.set(event.id, event);
+  const deadIds = new Set(Array.isArray(view?.disputedEventIds) ? view.disputedEventIds : []);
 
   const byId = new Map();
   for (let week = fromWeek; week <= toWeek; week += 1) {
     for (const generated of generateWeek(seed, week, view, cap)) {
+      if (deadIds.has(generated.id)) continue;
       if (generated.day < fromDay || generated.day > today) continue;
       byId.set(generated.id, generated);
     }
@@ -1370,6 +1463,7 @@ export function fold(records, cfg, now) {
   const isExpired = (note) => note.temporary && temporaryDays > 0 && now - note.at > temporaryDays * DAY_MS;
   const visibleNotes = notes.filter((note) => !disputed.has(note.seq) && !isExpired(note)).map((note) => note.text);
   const keptEvents = events.filter((event) => !disputed.has(event.seq));
+  const disputedEventIds = new Set(events.filter((event) => disputed.has(event.seq)).map((event) => event.id));
   const disputedList = [...disputed.values()].sort((a, b) => a.at - b.at);
   const expiredNotes = notes.filter(isExpired).length;
 
@@ -1442,6 +1536,9 @@ export function fold(records, cfg, now) {
       .slice(0, 3)
       .map((event) => event.text),
     disputed: disputedList,
+    // Disputed events stay dead: the generator must not resurrect the same week under the
+    // same id and quietly undo the user's correction.
+    disputedEventIds: [...disputedEventIds],
     expiredNotes,
     tone: toneOf(keptEvents),
     factCount: facts.length,

@@ -39,6 +39,7 @@ import {
   timeLabel,
   searchMemory,
   expandMemory,
+  memoryRecords,
 } from './persona.js';
 
 const DEFAULTS = {
@@ -838,12 +839,16 @@ export function apply(ctx, config) {
   /**
    * The I_idx layer: look something up instead of dumping the whole state. Short hits by
    * default; `expand` fetches one hit's full text only when the summary is not enough.
+   *
+   * Deliberately built from the *visible* records: a fact she no longer knows - forgotten,
+   * disputed, or a temporary fact that faded - must not come back through search while it
+   * is being kept out of the prompt.
    */
-  const memorySources = () => ({
-    facts: state.domain ? [...state.domain.table('facts').entries()].map(([, record]) => record) : [],
-    notes: researchNotes(),
-    events: Array.isArray(state.view?.eventsAll) ? state.view.eventsAll : [],
-  });
+  const memorySources = () => {
+    const records = state.domain ? [...state.domain.table('facts').entries()].map(([, record]) => record) : [];
+    const facts = memoryRecords({ records, cfg, now: Date.now() }).filter((record) => record.kind !== 'event');
+    return { facts, notes: researchNotes(), events: Array.isArray(state.view?.eventsAll) ? state.view.eventsAll : [] };
+  };
 
   ctx.tools.register({
     name: 'xiao_recall',
