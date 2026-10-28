@@ -103,6 +103,35 @@ export function apply(ctx, config) {
     if (logger && typeof logger[level] === 'function') logger[level](`[dsh-xiao] ${message}`);
   };
 
+  // A misspelled config key would otherwise be ignored in silence.
+  for (const key of Object.keys(config ?? {})) {
+    if (!(key in DEFAULTS)) log('warn', `unknown config key '${key}' ignored (known: ${Object.keys(DEFAULTS).join(', ')})`);
+  }
+
+  // Fail loud on a changed Host API instead of a cryptic TypeError at the first call.
+  const capabilities = [
+    ['storageDomain', ['open'], true],
+    ['systemPrompt', ['context'], true],
+    ['tools', ['register', 'guard'], true],
+    ['connection', ['fetch'], false],
+  ];
+  for (const [name, methods, required] of capabilities) {
+    const service = ctx.get(name);
+    if (!service) {
+      const message = `service '${name}' is unavailable`;
+      if (required) throw new Error(`${message}; dsh-xiao cannot run`);
+      log('warn', `${message}: the settings page will not have a data feed`);
+      continue;
+    }
+    for (const method of methods) {
+      if (typeof service[method] !== 'function') {
+        const message = `service '${name}' has no method '${method}' (Host API changed?)`;
+        if (required) throw new Error(`${message}; dsh-xiao cannot run`);
+        log('warn', `${message}: the settings page will not have a data feed`);
+      }
+    }
+  }
+
   const refresh = () => {
     if (!state.domain) return null;
     state.view = fold(state.domain.table('facts').entries().map(([, record]) => record), cfg, Date.now());
@@ -124,6 +153,20 @@ export function apply(ctx, config) {
     log('info', `birthing instance ${instanceId}`);
     await writeFact('birth', { instanceId, seed, birthAt: Date.now(), rulesVersion: RULES_VERSION }, 'seed', 'confirmed');
     return state.view;
+  };
+
+  /**
+   * Erase this instance and let a new one be born. Irreversible: every fact, the version
+   * history, the remembered user facts and the first-meeting marker are deleted.
+   */
+  const resetInstance = async () => {
+    if (!state.domain) throw new Error('xiao storage is not ready');
+    const facts = state.domain.table('facts');
+    for (const key of [...facts.keys()]) await facts.delete(key);
+    const flags = state.domain.table('flags');
+    for (const key of [...flags.keys()]) await flags.delete(key);
+    state.view = null;
+    return ensureBirth();
   };
 
   ctx.effect(() => {
@@ -221,6 +264,14 @@ export function apply(ctx, config) {
   // state-dependent rules (job transitions, seq existence) live in `xiao_update`, which
   // can refuse with a reason and record it.
   ctx.tools.guard((execution) => {
+    if (execution.name === 'xiao_reset') {
+      const args = isPlainObject(execution.arguments) ? execution.arguments : {};
+      if (args.confirm !== 'reset') {
+        recordRejection({ tool: 'xiao_reset', action: 'reset', code: 'needs_confirmation', reason: '重置不可逆，需 confirm="reset"' });
+        return '重置不可逆：先向用户确认，再带 confirm: "reset" 调用';
+      }
+      return undefined;
+    }
     if (execution.name !== 'xiao_update') return undefined;
     const args = isPlainObject(execution.arguments) ? execution.arguments : {};
     const action = String(args.action ?? '');
@@ -398,6 +449,34 @@ export function apply(ctx, config) {
   });
 
   ctx.tools.register({
+    name: 'xiao_reset',
+    description:
+      'Erase the current 晓 and let a new one be born: every fact, the version history, the remembered user facts and the first-meeting marker are deleted, then a new identity is rolled. Irreversible — her gender, age, job, traits and everything she remembered are gone; messages she already wrote into session logs are NOT deleted. Only call this after the user explicitly asked to reset her and confirmed the consequence. Requires confirm = "reset".',
+    parameters: {
+      type: 'object',
+      properties: {
+        confirm: { type: 'string', enum: ['reset'], description: 'The literal string "reset".' },
+      },
+      required: ['confirm'],
+      additionalProperties: false,
+    },
+    output: {
+      schema: { type: 'object', additionalProperties: true },
+      render: (args, value) => [{ type: 'text', text: '```json\n' + JSON.stringify(value, null, 2) + '\n```' }],
+    },
+    async execute(args) {
+      if (!isPlainObject(args) || args.confirm !== 'reset') {
+        return { applied: false, code: 'needs_confirmation', reason: '重置不可逆；先向用户确认，再带 confirm: "reset" 调用' };
+      }
+      if (!state.ready) return { applied: false, code: 'not_ready', reason: state.failure ?? 'still opening storage' };
+      const view = await resetInstance();
+      firstMessageSeen.clear();
+      introPending.clear();
+      return { applied: true, instanceId: view.instanceId, card: renderCard(view, cfg) };
+    },
+  });
+
+  ctx.tools.register({
     name: 'xiao_state',
     description:
       "Read Xiao's current persona state (identity fields, derived age, recent simulated events) and her append-only fact log. Read-only.",
@@ -560,4 +639,4 @@ export function apply(ctx, config) {
   log('info', 'mounted');
 }
 
-export const inject = ['storageDomain', 'systemPrompt', 'tools', 'connection'];
+export const inject = ['storageDomain', 'systemPrompt', 'tools'];

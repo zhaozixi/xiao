@@ -63,6 +63,7 @@ dsh --profile <name> ...   # 具体以 plugin_manager 返回为准
 |---|---|---|
 | `xiao_state` | 读角色卡、性格、近期事件；`includeFacts` 读原始日志，`asOfSeq` 读历史状态 | 只读 |
 | `xiao_update` | `set_job` / `remember` / `forget` / `set_age` | 见下 |
+| `xiao_reset` | 清空这个实例并重新投胎：全部事实、版本历史、记住的用户事实、首次见面标记 | 必须带 `confirm: "reset"`；**不可逆** |
 | `xiao_life` | 读最近 N 天（1–60）的模拟生活；`speak: [id]` 把说过的事件固化 | 返回体一律带 `simulated: true` |
 | `xiao_export` | 导出 JSONL 事实流 | 只读，不写盘 |
 
@@ -73,6 +74,8 @@ dsh --profile <name> ...   # 具体以 plugin_manager 返回为准
 - **职业转移必须符合状态机**：`student → job_seeking → employed | unemployed → retired`，`retired` 仅 55 岁以上可达，且不可逆。
 
 `remember` 写进去的事会以「关于对方，你记得这些」单独注入（见 §4 的 `userSummaryMaxChars`），`forget` 之后立刻消失。`set_age` 是一次**新的起点**，不是冻结：更正之后仍按 `growthPerMonth` 继续长。
+
+`xiao_reset` 清空后立即重新投胎，性别/年龄/职业/性格全部重抽；**已经写进会话日志的对话不会被删除**。守卫（`ctx.tools.guard()`）在 `confirm` 不是字面量 `"reset"` 时直接拒绝。
 
 被拒绝的调用不会改变状态，但会写一条 `rejected` 事实留痕。
 
@@ -121,7 +124,8 @@ dsh --profile <name> ...   # 具体以 plugin_manager 返回为准
 | 设置页一片空白 | 客户端 bundle 还是旧的 | 硬刷新；仍不行则重启 DSH |
 | 设置页显示红字 `xiao render error` | 客户端渲染异常 | 红字里有完整堆栈，直接上报 |
 | 设置页显示「读取失败」 | `/api/xiao.state` 不可达（插件未激活、连接服务缺席） | 检查插件行是否 `active`、日志里有没有 `connection service unavailable` |
-| 想从头开始 | — | 删除 `~/.dsh/storages/dsh_xiao.json`，下次激活会重新投胎，**不可逆** |
+| 想从头开始 | — | 让晓调 `xiao_reset`（带 `confirm: "reset"`）；或手工删掉 `~/.dsh/storages/dsh_xiao.json`。**不可逆** |
+| 插件行报 `service 'x' has no method 'y'` | 宿主 API 变了 | 启动自检失败会明确点名服务与方法；按报错改插件或降级宿主 |
 
 **安全说明（必须知道）**：设置页的数据来自 `GET /api/xiao.state`，它注册在 DSH 的 connection 通道上，由载波统一做 Host/Origin 检查与浏览器鉴权——**无凭证的直连返回 401**。v1.0 曾有一个未鉴权的 `/xiao/state`，已移除。`xiao_state` 返回里的 `pageRequests`（`total` / `page`）可以用来核对页面请求是否被接受。
 
