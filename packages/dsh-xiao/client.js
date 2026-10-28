@@ -72,6 +72,8 @@ window.__ModuleLoader__.load({
         researchEmpty: '还没有查过什么。',
         relations: '身边的人',
         interests: '兴趣',
+        nowTitle: '此刻',
+        dayTitle: '今天的安排',
         history: '大事记',
         kinds: {
           birth: '出生',
@@ -163,6 +165,8 @@ window.__ModuleLoader__.load({
         researchEmpty: 'Nothing looked up yet.',
         relations: 'People around her',
         interests: 'Interests',
+        nowTitle: 'Right now',
+        dayTitle: 'Today',
         history: 'Life so far',
         kinds: {
           birth: 'birth',
@@ -350,6 +354,15 @@ window.__ModuleLoader__.load({
 
     function shortSeq(seq) {
       return `#${String(seq).slice(-5)}`;
+    }
+
+    /** Minutes from midnight as HH:MM. */
+    function hhmm(minutes) {
+      const value = Number(minutes);
+      if (!Number.isFinite(value)) return '—';
+      const hour = String(Math.floor(value / 60) % 24).padStart(2, '0');
+      const minute = String(value % 60).padStart(2, '0');
+      return `${hour}:${minute}`;
     }
 
     function snippet(fact, dict) {
@@ -805,6 +818,26 @@ window.__ModuleLoader__.load({
         'div',
         { key: 'body' },
         h('div', { key: 'subtitle', style: { color: C.dim, fontSize: 13, margin: '2px 0 4px' } }, dict.subtitle),
+        h(
+          'div',
+          {
+            key: 'now',
+            style: {
+              display: 'flex',
+              gap: 10,
+              alignItems: 'baseline',
+              padding: '8px 12px',
+              margin: '6px 0 10px',
+              border: `1px solid ${C.line}`,
+              borderRadius: 8,
+              background: C.layer,
+              fontSize: 13,
+              color: C.text,
+            },
+          },
+          h('span', { style: { color: C.dim, fontSize: 12, minWidth: 34 } }, dict.nowTitle),
+          h('span', null, `${value.now?.label ?? '—'} · ${value.now?.text ?? '—'}`),
+        ),
         heading('h-remembers', dict.remembers),
         knows.length === 0
           ? h('div', { key: 'knows-empty', style: { color: C.dim, fontSize: 13 } }, dict.remembersEmpty)
@@ -857,6 +890,22 @@ window.__ModuleLoader__.load({
               value.interests.map((interest) => h('li', { key: interest }, interest)),
             )
           : h('div', { key: 'interests-empty', style: { color: C.dim, fontSize: 13 } }, '—'),
+        heading('h-day', dict.dayTitle),
+        Array.isArray(value.dayPlan) && value.dayPlan.length > 0
+          ? h(
+              'ul',
+              { key: 'day', style: { margin: '2px 0 0', paddingLeft: 0, listStyle: 'none', fontSize: 13, lineHeight: 1.75 } },
+              value.dayPlan.map((slot) => {
+                const current = slot.key === value.now?.slot;
+                return h(
+                  'li',
+                  { key: slot.key, style: { display: 'flex', gap: 10, color: current ? C.text : C.dim } },
+                  h('span', { style: { minWidth: 92, color: C.dim, fontSize: 12 } }, `${hhmm(slot.from)}–${hhmm(slot.to)}`),
+                  h('span', { style: { fontWeight: current ? 600 : 400 } }, slot.text),
+                );
+              }),
+            )
+          : h('div', { key: 'day-empty', style: { color: C.dim, fontSize: 13 } }, '—'),
         heading('h-history', dict.history),
         Array.isArray(value.lifeHistory) && value.lifeHistory.length > 0
           ? h(

@@ -737,6 +737,129 @@ const LIFE_TEMPLATES = {
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MONTH_MS = 30 * DAY_MS;
 
+// ---------------------------------------------------------------------------
+// Her day
+// ---------------------------------------------------------------------------
+
+/** Fixed skeleton: five parts of a day, in minutes from midnight. `night` wraps. */
+const DAY_SLOTS = [
+  { key: 'morning', from: 7 * 60, to: 11 * 60 + 30 },
+  { key: 'midday', from: 11 * 60 + 30, to: 13 * 60 + 30 },
+  { key: 'afternoon', from: 13 * 60 + 30, to: 18 * 60 },
+  { key: 'evening', from: 18 * 60, to: 22 * 60 },
+  { key: 'night', from: 22 * 60, to: 7 * 60 },
+];
+
+/**
+ * What each part of the day looks like, by what she does for a living. Sentences stay
+ * in the third person and in the present-ish tense, because they are read as "right now".
+ */
+const DAY_ACTIVITIES = {
+  student: {
+    morning: ['去上课', '在图书馆占了个座', '赶早八，没吃早饭'],
+    midday: ['在食堂排队吃饭', '回宿舍补了个觉'],
+    afternoon: ['在教室上课', '在自习室写作业', '和同学讨论小组作业'],
+    evening: ['在图书馆待到闭馆', '和同学在操场走圈'],
+    night: ['在宿舍刷手机', '熬夜改作业'],
+  },
+  employed: {
+    morning: ['在通勤路上', '刚到工位，还没开机', '在开早会'],
+    midday: ['下楼吃饭', '在工位上吃外卖'],
+    afternoon: ['在改稿', '在开会', '在赶一个拖了两天的活'],
+    evening: ['刚下班', '在回家的地铁上'],
+    night: ['在家瘫着', '在收拾屋子'],
+  },
+  job_seeking: {
+    morning: ['在投简历', '在改简历'],
+    midday: ['随便吃了点', '在楼下散步，想事情'],
+    afternoon: ['在准备面试', '在等一个回复'],
+    evening: ['在刷招聘信息', '和朋友聊了会儿工作的事'],
+    night: ['睡不着，在想要不要换个方向'],
+  },
+  unemployed: {
+    morning: ['睡到自然醒', '在床上刷手机'],
+    midday: ['煮了碗面', '在想中午吃什么'],
+    afternoon: ['在整理作品集', '去了一趟人才市场'],
+    evening: ['出门走了走', '在看有没有临时的活'],
+    night: ['在床上看剧', '在算这个月的开销'],
+  },
+  retired: {
+    morning: ['在公园散步', '在楼下买菜'],
+    midday: ['在做饭', '在午休'],
+    afternoon: ['在社区活动室', '在家看旧相册'],
+    evening: ['在楼下和人下棋', '在看电视'],
+    night: ['早早睡了', '在听收音机'],
+  },
+};
+
+function activityPool(view) {
+  const category = view?.jobCategory;
+  const remote = category === 'employed' && typeof view?.job === 'string' && view.job.includes('自由');
+  if (remote) {
+    return {
+      morning: ['在家泡了杯咖啡，还没进入状态', '在改昨天的稿子'],
+      midday: ['自己煮了点东西', '下楼买了份饭'],
+      afternoon: ['在画新的稿子', '在和一个甲方来回改图'],
+      evening: ['在收尾，尽量今天弄完', '出门走了走，脑子还在转'],
+      night: ['在桌边坐着，没在工作', '在听唱片'],
+    };
+  }
+  return DAY_ACTIVITIES[category] ?? DAY_ACTIVITIES.employed;
+}
+
+/**
+ * Her day, derived once per calendar day so it stays put while you talk.
+ * @param {object} view - folded character view.
+ * @param {number} now - wall clock.
+ * @returns {{key: string, from: number, to: number, text: string}[]} five parts.
+ */
+export function deriveDay(view, now) {
+  const day = Math.floor(now / DAY_MS);
+  const rnd = mulberry32(hashString(`${view?.seed ?? 'x'}#day#${day}`));
+  const pool = activityPool(view);
+  return DAY_SLOTS.map((slot) => ({
+    ...slot,
+    text: pick(rnd, pool[slot.key] ?? pool.afternoon ?? ['在忙别的']),
+  }));
+}
+
+/** The part of the day she is in right now. */
+export function currentMoment(view, now) {
+  const date = new Date(now);
+  const minutes = date.getHours() * 60 + date.getMinutes();
+  const plan = deriveDay(view, now);
+  const slot = plan.find((entry) =>
+    entry.from <= entry.to ? minutes >= entry.from && minutes < entry.to : minutes >= entry.from || minutes < entry.to,
+  );
+  return { at: now, minutes, slot: slot?.key, text: slot?.text ?? '在忙别的', plan };
+}
+
+/** A human time label for the current moment. */
+export function timeLabel(now) {
+  const hour = new Date(now).getHours();
+  if (hour < 6) return '凌晨';
+  if (hour < 9) return '早上';
+  if (hour < 12) return '上午';
+  if (hour < 14) return '中午';
+  if (hour < 18) return '下午';
+  if (hour < 23) return '晚上';
+  return '深夜';
+}
+
+/**
+ * One line saying what she is doing right now.
+ * @param {object} moment - result of {@link currentMoment}.
+ * @param {{ nowMaxChars?: number }} cfg - budget.
+ * @returns {string} the line, or empty.
+ */
+export function renderNow(moment, cfg) {
+  const budget = Number(cfg?.nowMaxChars ?? 0);
+  if (!budget || budget <= 0) return '';
+  if (!moment || typeof moment.text !== 'string' || moment.text.length === 0) return '';
+  const line = `此刻是${timeLabel(moment.at)}，你${moment.text}。这是你正在过的日子，不要主动说明它是模拟的。`;
+  return line.length <= budget ? line : line.slice(0, budget);
+}
+
 /**
  * Tone is a pure function of the committed events — never stored, so it can never
  * drift away from what actually happened.

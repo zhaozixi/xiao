@@ -26,11 +26,14 @@ import {
   isPlainObject,
   planUpdate,
   renderCard,
+  renderNow,
   renderResearch,
   renderUserNotes,
   researchQuery,
   suggestTransition,
   summarizeSearch,
+  currentMoment,
+  timeLabel,
 } from './persona.js';
 
 const DEFAULTS = {
@@ -52,6 +55,8 @@ const DEFAULTS = {
   researchPerDay: 2,
   /** Character budget for the "what you looked up" block. 0 disables it. */
   researchMaxChars: 200,
+  /** Character budget for the "what you are doing right now" line. 0 disables it. */
+  nowMaxChars: 120,
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -74,6 +79,7 @@ function normalizeConfig(config) {
     if (Number.isFinite(config.userSummaryMaxChars)) cfg.userSummaryMaxChars = Math.max(0, Math.floor(config.userSummaryMaxChars));
     if (Number.isFinite(config.researchPerDay)) cfg.researchPerDay = Math.max(0, Math.floor(config.researchPerDay));
     if (Number.isFinite(config.researchMaxChars)) cfg.researchMaxChars = Math.max(0, Math.floor(config.researchMaxChars));
+    if (Number.isFinite(config.nowMaxChars)) cfg.nowMaxChars = Math.max(0, Math.floor(config.nowMaxChars));
   }
   return cfg;
 }
@@ -225,6 +231,13 @@ export function apply(ctx, config) {
       }
     })();
     return lifeSyncTask;
+  };
+
+  /** What she is doing right now, plus the whole day, for the prompt and the page. */
+  const momentOf = (view) => {
+    if (!view) return undefined;
+    const moment = currentMoment(view, Date.now());
+    return { label: timeLabel(moment.at), text: moment.text, slot: moment.slot, plan: moment.plan };
   };
 
   /** Notes she wrote for herself, oldest first. */
@@ -472,6 +485,15 @@ export function apply(ctx, config) {
     text: (assembleContext) => (allowsInjection(assembleContext) ? renderResearch(researchNotes(), cfg) : ''),
   });
 
+  // What she is doing at this hour. Changes through the day, so two conversations in one
+  // afternoon do not find her in the same place.
+  ctx.systemPrompt.context({
+    name: 'xiao.now',
+    order: 903,
+    text: (assembleContext) =>
+      allowsInjection(assembleContext) ? renderNow(currentMoment(state.view, Date.now()), cfg) : '',
+  });
+
   ctx.tools.register({
     name: 'xiao_life',
     description:
@@ -657,9 +679,12 @@ export function apply(ctx, config) {
       const scoped = asOf === undefined ? records : records.filter((record) => record.seq <= asOf);
       const view = fold(scoped, cfg, Date.now());
       if (!view) return { ready: false, reason: 'no birth fact yet' };
+      const moment = momentOf(view);
       const payload = {
         ready: true,
         rulesVersion: view.rulesVersion,
+        now: moment ? { label: moment.label, text: moment.text, slot: moment.slot } : undefined,
+        dayPlan: moment ? moment.plan : [],
         identity: {
           name: '晓',
           gender: view.gender === 'female' ? '女性' : '男性',
@@ -707,9 +732,12 @@ export function apply(ctx, config) {
     const before = Number.isFinite(options.before) ? options.before : undefined;
     const pool = before === undefined ? all : all.filter((record) => record.seq < before);
     const page = pool.slice(Math.max(0, pool.length - limit));
+    const moment = momentOf(view);
     return {
       ready: true,
       instanceId: view.instanceId,
+      now: moment ? { label: moment.label, text: moment.text, slot: moment.slot } : undefined,
+      dayPlan: moment ? moment.plan : [],
       identity: {
         name: '晓',
         gender: view.gender === 'female' ? '女性' : '男性',
