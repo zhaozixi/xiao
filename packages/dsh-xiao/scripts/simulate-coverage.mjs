@@ -106,7 +106,9 @@ for (const category of CATEGORIES) {
         problems.push(...runChecks(finalView, { now, birth }).map((p) => `move: ${p}`));
         if (finalView.currentCity !== target) problems.push(`move: still in ${finalView.currentCity}, expected ${target}`);
         if (finalView.home.city !== target) problems.push(`move: the flat is in ${finalView.home.city}`);
-        if (finalView.birthCity === target) problems.push('move: the birth city changed');
+        // Moving back to her birth city is legitimate, so compare with the previous birth
+        // city rather than with the destination.
+        if (finalView.birthCity !== withJob.birthCity) problems.push('move: the birth city changed');
         if (JSON.stringify(finalView.nearby) === JSON.stringify(withJob.nearby)) {
           problems.push('move: the same familiar spots in a different city');
         }

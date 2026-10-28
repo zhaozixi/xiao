@@ -5,7 +5,7 @@
  * Every entry here traces back to a real bug found in a real reset; a check that cannot be
  * traced to one should not be added, or the suite fills up with rules nobody needs.
  */
-import { CATALOG, deriveDay, looksTraditional, researchQuery, renderCard } from '../persona.js';
+import { AGE_MAX, CATALOG, deriveDay, looksTraditional, researchQuery, renderCard } from '../persona.js';
 
 const DAY = 86_400_000;
 
@@ -33,6 +33,9 @@ export function makeChecks({ now }) {
     {
       name: 'age matches the birth date',
       run(view) {
+        // Aging stops at the ceiling by design, so a 60-year-old stays 60 while the
+        // calendar moves on; that is the one place the two are allowed to disagree.
+        if (view.age >= AGE_MAX) return null;
         const [year, month, day] = view.birthDate.split('-').map(Number);
         const thisYear = new Date(now).getFullYear();
         const birthday = new Date(thisYear, month - 1, day).getTime();
