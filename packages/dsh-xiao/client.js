@@ -16,10 +16,13 @@ window.__ModuleLoader__.load({
         traits: '性格',
         card: '注入到提示里的话',
         timeline: '事实时间线',
+        openPage: '事实时间线已移到左侧栏的「晓」页面。',
+        pageHint: '追加式日志：只写不改，删除靠墓碑标记。',
         empty: '还没有任何事件。',
         loading: '读取中…',
         error: '读取失败',
         simulated: '模拟',
+        unit: '条事实',
         note: '这里只读。改状态要通过对话里的 xiao_update 工具。',
         fields: {
           gender: '性别',
@@ -49,10 +52,13 @@ window.__ModuleLoader__.load({
         traits: 'Traits',
         card: 'Text injected into the prompt',
         timeline: 'Fact timeline',
+        openPage: 'The fact timeline now lives on the 晓 panel in the left sidebar.',
+        pageHint: 'Append-only log: write once, never rewritten; deletion is a tombstone.',
         empty: 'No events yet.',
         loading: 'Loading…',
         error: 'Failed to load',
         simulated: 'simulated',
+        unit: 'facts',
         note: 'Read-only. State changes go through the xiao_update tool in chat.',
         fields: {
           gender: 'Gender',
@@ -84,6 +90,7 @@ window.__ModuleLoader__.load({
       line: 'var(--dsw-alias-border-l1)',
       warn: 'var(--dsw-alias-state-warn-primary)',
       error: 'var(--dsw-alias-state-error-primary)',
+      brand: 'var(--dsw-alias-brand-primary)',
     };
 
     function activeLang(ctx) {
@@ -204,6 +211,124 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /** The append-only ledger, shared by the timeline page. */
+    function TimelineList(props) {
+      const { facts, dict, limit } = props;
+      const rows = (facts ?? []).slice().reverse().slice(0, limit ?? 200);
+      return h(
+        'ul',
+        { style: { listStyle: 'none', margin: 0, padding: 0 } },
+        rows.map((fact) =>
+          h(
+            'li',
+            {
+              key: String(fact.seq),
+              style: {
+                display: 'flex',
+                gap: 12,
+                alignItems: 'baseline',
+                padding: '8px 0',
+                borderBottom: `1px solid ${C.line}`,
+                fontSize: 13,
+              },
+            },
+            h(
+              'span',
+              { style: { color: C.dim, fontSize: 11, minWidth: 84, textTransform: 'uppercase' } },
+              dict.kinds[fact.kind] ?? fact.kind,
+            ),
+            h('span', { style: { color: C.text, flex: 1 } }, describe(fact)),
+            fact.kind === 'event'
+              ? h(
+                  'span',
+                  {
+                    style: {
+                      color: C.warn,
+                      fontSize: 11,
+                      border: `1px solid ${C.line}`,
+                      borderRadius: 4,
+                      padding: '0 4px',
+                    },
+                  },
+                  dict.simulated,
+                )
+              : null,
+            h('span', { style: { color: C.dim, fontSize: 11, minWidth: 96, textAlign: 'right' } }, `#${fact.seq}`),
+          ),
+        ),
+      );
+    }
+
+    /** Sidebar icon; receives the requested square edge and whether the panel is active. */
+    function XiaoIcon(props) {
+      const size = props?.size ?? 18;
+      const active = Boolean(props?.active);
+      return h(
+        'svg',
+        {
+          viewBox: '0 0 24 24',
+          width: size,
+          height: size,
+          role: 'img',
+          'aria-hidden': true,
+          style: { display: 'block' },
+        },
+        h('path', {
+          d: 'M16 3.2a9 9 0 1 0 0 17.6 7.2 7.2 0 1 1 0-17.6Z',
+          fill: active ? C.brand : C.dim,
+        }),
+      );
+    }
+
+    function XiaoPage(props) {
+      const ctx = props?.ctx;
+      const lang = useLang(ctx);
+      const dict = DICT[lang] ?? DICT.zh;
+      const snapshot = useSnapshot('api/xiao.state');
+
+      let body;
+      if (snapshot.status === 'loading') {
+        body = h('div', { style: { color: C.dim, fontSize: 13, padding: '24px 0' } }, dict.loading);
+      } else if (snapshot.status === 'error') {
+        body = h('div', { style: { color: C.error, fontSize: 13, padding: '24px 0' } }, `${dict.error}：${snapshot.error}`);
+      } else {
+        const value = snapshot.value ?? {};
+        if (!value.ready) {
+          body = h('div', { style: { color: C.dim, fontSize: 13, padding: '24px 0' } }, dict.empty);
+        } else {
+          const facts = Array.isArray(value.facts) ? value.facts : [];
+          body = h(
+            'div',
+            null,
+            h(
+              'div',
+              { style: { display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 4 } },
+              h('h2', { style: { margin: 0, fontSize: 18, fontWeight: 600, color: C.text } }, dict.timeline),
+              h('span', { style: { color: C.dim, fontSize: 12 } }, `${facts.length} ${dict.unit}`),
+            ),
+            h('div', { style: { color: C.dim, fontSize: 12, marginBottom: 16 } }, dict.pageHint),
+            facts.length === 0
+              ? h('div', { style: { color: C.dim, fontSize: 13 } }, dict.empty)
+              : h(TimelineList, { facts, dict, limit: 200 }),
+            h('div', { style: { color: C.dim, fontSize: 12, marginTop: 16 } }, dict.note),
+          );
+        }
+      }
+
+      return h(
+        'div',
+        {
+          style: {
+            height: '100%',
+            overflowY: 'auto',
+            padding: '28px 32px 40px',
+            boxSizing: 'border-box',
+          },
+        },
+        h('div', { style: { maxWidth: 880, margin: '0 auto' } }, body),
+      );
+    }
+
     function contentOf(snapshot, dict) {
       if (snapshot.status === 'loading') {
         return h('div', { style: { color: C.dim, fontSize: 13, padding: '12px 0' } }, dict.loading);
@@ -217,7 +342,6 @@ window.__ModuleLoader__.load({
       }
       const identity = value.identity ?? {};
       const traits = value.traits ?? {};
-      const facts = Array.isArray(value.facts) ? value.facts : [];
 
       const children = [
         h('div', { key: 'subtitle', style: { color: C.dim, fontSize: 13, margin: '2px 0 4px' } }, dict.subtitle),
@@ -252,57 +376,9 @@ window.__ModuleLoader__.load({
           },
           value.card || '—',
         ),
-        heading('h-timeline', `${dict.timeline} · ${facts.length}`),
+        h('div', { key: 'open-page', style: { color: C.dim, fontSize: 12, marginTop: 14 } }, dict.openPage),
+        h('div', { key: 'note', style: { color: C.dim, fontSize: 12, marginTop: 6 } }, dict.note),
       ];
-
-      if (facts.length === 0) {
-        children.push(h('div', { key: 'empty', style: { color: C.dim, fontSize: 13 } }, dict.empty));
-      } else {
-        const items = facts
-          .slice()
-          .reverse()
-          .slice(0, 40)
-          .map((fact) =>
-            h(
-              'li',
-              {
-                key: String(fact.seq),
-                style: {
-                  display: 'flex',
-                  gap: 10,
-                  alignItems: 'baseline',
-                  padding: '6px 0',
-                  borderBottom: `1px solid ${C.line}`,
-                  fontSize: 13,
-                },
-              },
-              h(
-                'span',
-                { style: { color: C.dim, fontSize: 11, minWidth: 72, textTransform: 'uppercase' } },
-                dict.kinds[fact.kind] ?? fact.kind,
-              ),
-              h('span', { style: { color: C.text, flex: 1 } }, describe(fact)),
-              fact.kind === 'event'
-                ? h(
-                    'span',
-                    {
-                      style: {
-                        color: C.warn,
-                        fontSize: 11,
-                        border: `1px solid ${C.line}`,
-                        borderRadius: 4,
-                        padding: '0 4px',
-                      },
-                    },
-                    dict.simulated,
-                  )
-                : null,
-            ),
-          );
-        children.push(h('ul', { key: 'facts', style: { listStyle: 'none', margin: 0, padding: 0 } }, items));
-      }
-
-      children.push(h('div', { key: 'note', style: { color: C.dim, fontSize: 12, marginTop: 10 } }, dict.note));
       return h('div', { key: 'body' }, children);
     }
 
@@ -341,16 +417,32 @@ window.__ModuleLoader__.load({
       }
     }
 
+    function guard(Component) {
+      return (props) => h(Boundary, null, h(Component, props));
+    }
+
     return {
       // `locale` must be declared: a Client service accessor throws without it.
       inject: ['slots', 'locale'],
       apply(ctx) {
         // Fail loud at activation rather than as a silent blank slot.
         h('div', null);
+
+        // Settings section: identity, traits, the injected card.
         ctx.slots.inject('settings.section', () =>
-          ctx.slots.register({ name: 'settings.section', id: 'xiao', order: 25, label: '晓' }, (props) =>
-            h(Boundary, null, h(XiaoSection, { ...props, ctx })),
-          ),
+          ctx.slots.register({ name: 'settings.section', id: 'xiao', order: 25, label: '晓' }, guard((props) =>
+            h(XiaoSection, { ...props, ctx }),
+          )),
+        );
+
+        // Standalone timeline page: one key in `main`, addressed by the sidebar panel id.
+        ctx.slots.inject('main', () =>
+          ctx.slots.register({ name: 'main', key: 'xiao' }, guard((props) => h(XiaoPage, { ...props, ctx }))),
+        );
+
+        // The sidebar button that opens it; this component draws the icon, the host the label.
+        ctx.slots.inject('sidebar.panellist', () =>
+          ctx.slots.register({ name: 'sidebar.panellist', id: 'xiao', order: 20, label: '晓' }, XiaoIcon),
         );
       },
     };
