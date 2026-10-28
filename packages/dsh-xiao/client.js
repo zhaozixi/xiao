@@ -68,6 +68,8 @@ window.__ModuleLoader__.load({
           nearby: '附近常去',
         },
         places: '住处与路线',
+        research: '最近自己查的事',
+        researchEmpty: '还没有查过什么。',
         relations: '身边的人',
         history: '大事记',
         kinds: {
@@ -156,6 +158,8 @@ window.__ModuleLoader__.load({
           nearby: 'Around home',
         },
         places: 'Home and route',
+        research: 'Looked up on her own',
+        researchEmpty: 'Nothing looked up yet.',
         relations: 'People around her',
         history: 'Life so far',
         kinds: {
@@ -858,6 +862,24 @@ window.__ModuleLoader__.load({
               ),
             )
           : h('div', { key: 'history-empty', style: { color: C.dim, fontSize: 13 } }, '—'),
+        heading('h-research', dict.research),
+        Array.isArray(value.research) && value.research.length > 0
+          ? h(
+              'ul',
+              { key: 'research', style: { margin: '2px 0 0', paddingLeft: 18, fontSize: 13, lineHeight: 1.75, color: C.text } },
+              value.research
+                .slice()
+                .reverse()
+                .map((note) =>
+                  h(
+                    'li',
+                    { key: note.at },
+                    h('span', { style: { color: C.dim } }, `${note.query} → `),
+                    String(note.summary ?? '').slice(0, 80),
+                  ),
+                ),
+            )
+          : h('div', { key: 'research-empty', style: { color: C.dim, fontSize: 13 } }, dict.researchEmpty),
         heading('h-traits', dict.traits),
         row('outlook', dict.fields.outlook, traits.outlook ?? '—'),
         row('curiosity', dict.fields.curiosity, traits.curiosity ?? '—'),

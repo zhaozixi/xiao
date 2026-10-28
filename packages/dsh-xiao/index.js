@@ -26,8 +26,11 @@ import {
   isPlainObject,
   planUpdate,
   renderCard,
+  renderResearch,
   renderUserNotes,
+  researchQuery,
   suggestTransition,
+  summarizeSearch,
 } from './persona.js';
 
 const DEFAULTS = {
@@ -45,7 +48,13 @@ const DEFAULTS = {
   announceOnFirstMeeting: true,
   /** Character budget for the "what you remember about the user" block. 0 disables it. */
   userSummaryMaxChars: 200,
+  /** How many things she may look up per day on her own time. 0 disables it. */
+  researchPerDay: 2,
+  /** Character budget for the "what you looked up" block. 0 disables it. */
+  researchMaxChars: 200,
 };
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Appended to the card exactly once, when the first user message of a fresh session arrives. */
 const FIRST_MEETING_HINT =
@@ -63,6 +72,8 @@ function normalizeConfig(config) {
     if (Number.isFinite(config.lifeEventsPerWeek)) cfg.lifeEventsPerWeek = config.lifeEventsPerWeek;
     if (typeof config.announceOnFirstMeeting === 'boolean') cfg.announceOnFirstMeeting = config.announceOnFirstMeeting;
     if (Number.isFinite(config.userSummaryMaxChars)) cfg.userSummaryMaxChars = Math.max(0, Math.floor(config.userSummaryMaxChars));
+    if (Number.isFinite(config.researchPerDay)) cfg.researchPerDay = Math.max(0, Math.floor(config.researchPerDay));
+    if (Number.isFinite(config.researchMaxChars)) cfg.researchMaxChars = Math.max(0, Math.floor(config.researchMaxChars));
   }
   return cfg;
 }
@@ -216,6 +227,68 @@ export function apply(ctx, config) {
     return lifeSyncTask;
   };
 
+  /** Notes she wrote for herself, oldest first. */
+  const researchNotes = () => {
+    if (!state.domain) return [];
+    try {
+      return [...state.domain.table('notes').entries()]
+        .map(([, note]) => note)
+        .sort((a, b) => a.at - b.at);
+    } catch (error) {
+      return [];
+    }
+  };
+
+  /**
+   * Her own time: look one thing up, at most `researchPerDay` times a day, and only about
+   * her own life — never about the user. She does not speak about it here; the note just
+   * becomes something she happens to know.
+   */
+  let researchTask;
+  const runResearch = () => {
+    if (researchTask) return researchTask;
+    researchTask = (async () => {
+      try {
+        if (!state.ready || !state.domain || cfg.researchPerDay <= 0) return;
+        const web = ctx.get('web');
+        if (!web || typeof web.search !== 'function') return;
+        const view = refresh();
+        if (!view) return;
+        const today = Math.floor(Date.now() / DAY_MS);
+        const flags = state.domain.table('flags');
+        const marker = flags.get('research');
+        const used = marker && marker.day === today ? Number(marker.used) || 0 : 0;
+        if (used >= cfg.researchPerDay) return;
+        const notes = state.domain.table('notes');
+        const query = researchQuery(view, today);
+        if ([...notes.entries()].some(([, note]) => note.day === today && note.query === query)) return;
+        const result = await web.search({ query, maxResults: 5 });
+        const summary = summarizeSearch(result);
+        await flags.put('research', { day: today, used: used + 1 });
+        if (!summary) return;
+        const now = Date.now();
+        await notes.put(`${String(today).padStart(6, '0')}-${now}`, {
+          at: now,
+          day: today,
+          query,
+          summary,
+          sources: (Array.isArray(result?.sources) ? result.sources : []).slice(0, 3).map((source) => ({
+            title: source?.title,
+            url: source?.url,
+          })),
+        });
+        const keys = [...notes.keys()].sort();
+        for (const stale of keys.slice(0, Math.max(0, keys.length - 30))) await notes.delete(stale);
+        log('info', `looked something up on her own: ${query}`);
+      } catch (error) {
+        log('warn', `research skipped: ${error?.message ?? error}`);
+      } finally {
+        researchTask = undefined;
+      }
+    })();
+    return researchTask;
+  };
+
   ctx.effect(() => {
     let cancelled = false;
     let domain;
@@ -259,6 +332,12 @@ export function apply(ctx, config) {
   // forget: it pins past days and never speaks, so it cannot delay or interrupt anything.
   ctx.on('agent/created', () => {
     void syncLife();
+  });
+
+  // After a turn, she may go and look something up on her own. Fire and forget: this is
+  // her own time, so it never delays or interrupts the reply.
+  ctx.on('agent/turn-stopping', () => {
+    void runResearch();
   });
 
   // The one and only Xiao introduces herself once: on the first user message of the
@@ -383,6 +462,14 @@ export function apply(ctx, config) {
     name: 'xiao.user',
     order: 901,
     text: (assembleContext) => (allowsInjection(assembleContext) ? renderUserNotes(state.view, cfg) : ''),
+  });
+
+  // What she looked up on her own time: also its own budget, and never framed as a fact
+  // about the user.
+  ctx.systemPrompt.context({
+    name: 'xiao.research',
+    order: 902,
+    text: (assembleContext) => (allowsInjection(assembleContext) ? renderResearch(researchNotes(), cfg) : ''),
   });
 
   ctx.tools.register({
@@ -586,6 +673,8 @@ export function apply(ctx, config) {
         relations: view.relations,
         lifeHistory: view.lifeHistory,
         places: { home: view.home, work: view.work, commute: view.commute, nearby: view.nearby },
+        research: researchNotes().slice(-3),
+        webAvailable: Boolean(ctx.get('web') && typeof ctx.get('web').search === 'function'),
         traits: {
           outlook: view.outlook,
           curiosity: view.curiosity,
@@ -626,10 +715,14 @@ export function apply(ctx, config) {
         age: view.age,
         birthDate: view.birthDate,
         birthCity: view.birthCity,
+        currentCity: view.currentCity,
         job: view.job,
         jobCategory: view.jobCategory,
       },
       relations: view.relations,
+      lifeHistory: view.lifeHistory,
+      places: { home: view.home, work: view.work, commute: view.commute, nearby: view.nearby },
+      research: researchNotes().slice(-3),
       traits: {
         outlook: view.outlook,
         curiosity: view.curiosity,

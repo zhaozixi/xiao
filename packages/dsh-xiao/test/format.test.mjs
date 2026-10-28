@@ -57,9 +57,9 @@ test('the domain declaration is frozen at version 1', () => {
   assert.equal(SPEC.name, 'dsh_xiao');
   assert.equal(SPEC.version, 1);
   assert.equal(SPEC.invalidRecords, 'backup-and-skip');
-  // `flags` is additive and carries no character state: adding it did not change the
-  // record shape, so the version stays 1 and old data keeps folding to the same view.
-  assert.deepEqual(Object.keys(SPEC.tables), ['facts', 'flags']);
+  // `flags` and `notes` are additive and carry no character state: adding them did not
+  // change the record shape, so the version stays 1 and old data keeps folding the same.
+  assert.deepEqual(Object.keys(SPEC.tables), ['facts', 'flags', 'notes']);
 });
 
 test('every stored record in the fixture still validates', () => {

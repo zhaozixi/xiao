@@ -556,6 +556,66 @@ export function suggestTransition(view, events) {
 }
 
 /**
+ * What she would look up on her own time, one query per day. Deliberately about her own
+ * life — her hobby, her city — and never about the user.
+ * @param {object} view - folded character view.
+ * @param {number} day - epoch day, so the same day always asks the same thing.
+ * @returns {string} the query.
+ */
+export function researchQuery(view, day) {
+  const rnd = mulberry32(hashString(`${view?.seed ?? 'x'}#research#${day}`));
+  const hobby = typeof view?.hobby === 'string' && view.hobby.length > 0 ? view.hobby : '散步';
+  const city = typeof view?.currentCity === 'string' ? view.currentCity : (view?.birthCity ?? '');
+  const templates = [
+    `${hobby} 新手 要注意什么`,
+    `${city} 周末 适合一个人去的地方`,
+    `${hobby} 入门 需要买什么`,
+    `${city} 最近 有什么展览`,
+    `${hobby} 怎么坚持下来`,
+  ];
+  return pick(rnd, templates);
+}
+
+/**
+ * Compress one search into the one or two sentences she would remember.
+ * @param {object} result - a WebSearchResult.
+ * @returns {string} at most 200 characters, possibly empty.
+ */
+export function summarizeSearch(result) {
+  const parts = [];
+  if (typeof result?.content === 'string' && result.content.trim().length > 0) parts.push(result.content.trim());
+  for (const source of Array.isArray(result?.sources) ? result.sources : []) {
+    const line = source?.title ?? source?.snippet;
+    if (typeof line === 'string' && line.trim().length > 0) parts.push(line.trim());
+    if (parts.length >= 3) break;
+  }
+  return parts.join('；').replace(/\s+/g, ' ').slice(0, 200);
+}
+
+/**
+ * Render what she looked up recently, as her own memory rather than user facts.
+ * @param {object[]} notes - stored notes, oldest first.
+ * @param {{ researchMaxChars?: number }} cfg - budget.
+ * @returns {string} the block, empty when there is nothing or the budget is 0.
+ */
+export function renderResearch(notes, cfg) {
+  const budget = Number(cfg?.researchMaxChars ?? 0);
+  if (!budget || budget <= 0) return '';
+  const usable = (Array.isArray(notes) ? notes : []).filter(
+    (note) => note && typeof note.query === 'string' && typeof note.summary === 'string' && note.summary.length > 0,
+  );
+  if (usable.length === 0) return '';
+  const lines = ['你最近自己查过这些：'];
+  for (let index = usable.length - 1; index >= 0 && lines.length < 3; index -= 1) {
+    const note = usable[index];
+    const line = `- ${note.query} → ${note.summary.slice(0, 90)}`;
+    if ([...lines, line].join('\n').length > budget) break;
+    lines.push(line);
+  }
+  return lines.length > 1 ? lines.join('\n') : '';
+}
+
+/**
  * Render what the character remembers about the user. Kept separate from the persona
  * card so the two budgets do not compete, and capped hard like the card.
  * @param {object} view - folded character view.
@@ -809,8 +869,21 @@ export const SPEC = {
     // Additive table (no record-shape change): one profile-level flag per key, e.g.
     // whether the one and only Xiao has already been introduced.
     flags: { valueSchema: factSchema(isFlagRecord, 'flag record') },
+    // What she looked up on her own time. Separate from `facts` on purpose: research
+    // is not a decision about her life, and it should never look like one.
+    notes: { valueSchema: factSchema(isNoteRecord, 'note record') },
   },
 };
+
+function isNoteRecord(value) {
+  if (!isPlainObject(value)) return false;
+  if (typeof value.at !== 'number' || !Number.isFinite(value.at)) return false;
+  if (typeof value.day !== 'number' || !Number.isFinite(value.day)) return false;
+  if (typeof value.query !== 'string' || value.query.length === 0) return false;
+  if (typeof value.summary !== 'string') return false;
+  if (value.sources !== undefined && !Array.isArray(value.sources)) return false;
+  return true;
+}
 
 function isFlagRecord(value) {
   if (!isPlainObject(value)) return false;
