@@ -1278,3 +1278,32 @@ function birthDateString(at, age, month, day) {
   if (candidate.getTime() > at) year -= 1;
   return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
+
+/**
+ * Everything the generator can draw from, for inspection and for the POOLS.md reference.
+ * Read-only: nothing here is state, and nothing here is ever stored.
+ */
+export const CATALOG = {
+  ages: { min: AGE_MIN, max: AGE_MAX },
+  genders: GENDERS,
+  traits: { outlook: OUTLOOK, curiosity: CURIOSITY, speech: SPEECH, hobby: HOBBIES, quirk: QUIRKS },
+  jobs: { young: JOBS_YOUNG, mid: JOBS_MID, late: JOBS_LATE },
+  birthCities: BIRTH_CITIES,
+  interests: INTERESTS,
+  surnames: SURNAMES,
+  givenNames: { female: GIVEN_FEMALE, male: GIVEN_MALE },
+  relations: {
+    parentDetail: PARENT_DETAIL,
+    friend: { roles: FRIEND_ROLES, detail: FRIEND_DETAIL },
+    work: { roles: WORK_ROLES, detail: WORK_DETAIL },
+    classmate: { roles: CLASS_ROLES, detail: CLASS_DETAIL },
+    partnerDetail: PARTNER_DETAIL,
+    childDetail: CHILD_DETAIL,
+  },
+  places: { areas: AREAS, homeDetail: HOME_DETAIL, nearby: NEARBY, commute: COMMUTE },
+  day: { slots: DAY_SLOTS, activities: DAY_ACTIVITIES },
+  lifeTemplates: LIFE_TEMPLATES,
+  placeholders: { local: LOCAL_TEMPLATES, social: SOCIAL_TEMPLATES, interest: INTEREST_TEMPLATES },
+  jobTransitions: JOB_TRANSITIONS,
+  retireAge: RETIRE_AGE,
+};
