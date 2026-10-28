@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { RULES_VERSION, derivePersona, fold, renderCard } from '../persona.js';
+import { RULES_VERSION, derivePersona, fold, planUpdate, renderCard } from '../persona.js';
 
 const START = Date.UTC(2026, 9, 28, 9, 32, 0);
 const YEAR = 365.25 * 24 * 60 * 60 * 1000;
@@ -138,4 +138,53 @@ test('the card stays within a tight budget even without the social line', () => 
     const card = renderCard(view, { cardMaxChars: budget });
     assert.ok(card.length <= budget, `budget ${budget} produced ${card.length}`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// Where she lives now
+// ---------------------------------------------------------------------------
+
+test('she may have moved away from her birth city, deterministically', () => {
+  const persona = derivePersona('city-seed-1');
+  assert.ok(typeof persona.currentCity === 'string' && persona.currentCity.length > 0);
+  if (persona.movedAt === undefined) {
+    assert.equal(persona.currentCity, persona.birthCity, 'no move means she stayed');
+  } else {
+    assert.notEqual(persona.currentCity, persona.birthCity, 'a move means a different city');
+    assert.ok(persona.movedAt <= persona.age, 'a move cannot happen after today');
+  }
+  assert.deepEqual(derivePersona('city-seed-1'), persona);
+});
+
+test('a move is a state change, not a rewrite of history', () => {
+  const move = { seq: 2, at: START + 1_000, kind: 'override', data: { field: 'city', value: '苏州' }, source: 'user', evidence: 'confirmed' };
+  const before = fold([birth('city-seed-2')], { growthPerMonth: 1 / 12 }, START);
+  const after = fold([birth('city-seed-2'), move], { growthPerMonth: 1 / 12 }, START + 1_000);
+  assert.equal(after.currentCity, '苏州');
+  assert.equal(after.birthCity, before.birthCity, 'birth city never changes');
+  assert.deepEqual(after.lifeHistory, before.lifeHistory, 'history is frozen');
+});
+
+test('the card says where she lives when it differs from where she was born', () => {
+  const moved = {
+    seq: 1,
+    at: START,
+    kind: 'birth',
+    data: { instanceId: 'm', seed: 'city-seed-3', birthAt: START, rulesVersion: RULES_VERSION },
+    source: 'seed',
+    evidence: 'confirmed',
+  };
+  const override = { seq: 2, at: START + 1, kind: 'override', data: { field: 'city', value: '苏州' }, source: 'user', evidence: 'confirmed' };
+  const card = renderCard(fold([moved, override], { growthPerMonth: 1 / 12 }, START + 2), { cardMaxChars: 400 });
+  assert.ok(card.includes('现在住在苏州'), 'the current city is missing from the card');
+  assert.ok(card.includes('出生在'), 'the birth city is missing from the card');
+});
+
+test('move refuses an empty or oversized city', () => {
+  const view = fold([birth('city-seed-4')], { growthPerMonth: 1 / 12 }, START);
+  assert.equal(planUpdate({ action: 'move', city: '  ' }, view).code, 'missing_city');
+  assert.equal(planUpdate({ action: 'move', city: 'x'.repeat(21) }, view).code, 'city_too_long');
+  const ok = planUpdate({ action: 'move', city: '苏州' }, view);
+  assert.equal(ok.ok, true);
+  assert.deepEqual(ok.data, { field: 'city', value: '苏州' });
 });

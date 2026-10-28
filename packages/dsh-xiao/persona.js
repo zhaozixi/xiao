@@ -170,7 +170,7 @@ function deriveRelations(rnd, jobCategory, age) {
  * @param {number} age - current age; nothing after it is emitted.
  * @returns {object[]} milestones, oldest first.
  */
-export function deriveLifeHistory(seed, birthDate, birthCity, age) {
+export function deriveLifeHistory(seed, birthDate, birthCity, age, options = {}) {
   const [year, month, day] = String(birthDate).split('-').map(Number);
   if (![year, month, day].every(Number.isFinite)) return [];
   const rnd = mulberry32(hashString(`${seed}#history`));
@@ -196,7 +196,10 @@ export function deriveLifeHistory(seed, birthDate, birthCity, age) {
     add(19, '第一份工作');
   }
   if (age >= 27) add(26, '换了一次工作');
-  return out;
+  if (Number.isFinite(options.movedAt) && options.currentCity && options.currentCity !== birthCity) {
+    add(options.movedAt, `搬到${options.currentCity}`);
+  }
+  return out.sort((a, b) => a.age - b.age);
 }
 
 /**
@@ -215,6 +218,17 @@ export function derivePersona(seed) {
   const quirk = pick(rnd, QUIRKS);
   const jobPool = age < 23 ? JOBS_YOUNG : age < 50 ? JOBS_MID : JOBS_LATE;
   const chosen = pick(rnd, jobPool);
+
+  // Appended after every pre-existing field so old seeds keep the same character.
+  const birthMonth = 1 + Math.floor(rnd() * 12);
+  const birthDay = 1 + Math.floor(rnd() * 28);
+  const birthCity = pick(rnd, BIRTH_CITIES);
+  const relations = deriveRelations(rnd, chosen.category, age);
+  // Most adults moved away at some point; the rest stayed in the city they were born in.
+  const movedAway = rnd() < 0.55;
+  const movedAt = movedAway ? (age >= 22 ? 22 : 18) : undefined;
+  const currentCity = movedAway ? pick(rnd, BIRTH_CITIES.filter((city) => city !== birthCity)) : birthCity;
+
   return {
     gender: gender.key,
     genderWord: gender.word,
@@ -226,11 +240,12 @@ export function derivePersona(seed) {
     speech,
     hobby,
     quirk,
-    // Appended after every pre-existing field so old seeds keep the same character.
-    birthMonth: 1 + Math.floor(rnd() * 12),
-    birthDay: 1 + Math.floor(rnd() * 28),
-    birthCity: pick(rnd, BIRTH_CITIES),
-    relations: deriveRelations(rnd, chosen.category, age),
+    birthMonth,
+    birthDay,
+    birthCity,
+    relations,
+    currentCity,
+    movedAt,
   };
 }
 
@@ -326,6 +341,13 @@ export function planUpdate(input, view, records = []) {
     return { ok: true, kind: 'tombstone', data: { targetSeq: seq }, source: 'user' };
   }
 
+  if (action === 'move') {
+    const city = typeof args.city === 'string' ? args.city.trim() : '';
+    if (city.length === 0) return { ok: false, code: 'missing_city', reason: 'city 不能为空' };
+    if (city.length > 20) return { ok: false, code: 'city_too_long', reason: 'city 超过 20 字' };
+    return { ok: true, kind: 'override', data: { field: 'city', value: city }, source: 'user' };
+  }
+
   if (action === 'set_age') {
     if (args.confirmed !== true) {
       return {
@@ -341,7 +363,7 @@ export function planUpdate(input, view, records = []) {
     return { ok: true, kind: 'override', data: { field: 'age', value: age }, source: 'user' };
   }
 
-  return { ok: false, code: 'unknown_action', reason: `未知 action：${action || '(空)'}；可选 set_job / remember / forget / set_age` };
+  return { ok: false, code: 'unknown_action', reason: `未知 action：${action || '(空)'}；可选 set_job / move / remember / forget / set_age` };
 }
 
 /**
@@ -380,15 +402,17 @@ export function renderCard(view, cfg) {
   return lines.join('\n');
 }
 
-/** One short line about where she is from and who is around her. */
+/** One short line about where she lives, where she is from, and who is around her. */
 function socialLine(view) {
   const city = typeof view?.birthCity === 'string' ? view.birthCity : '';
+  const now = typeof view?.currentCity === 'string' && view.currentCity !== city ? view.currentCity : '';
   const names = Array.isArray(view?.relations)
     ? view.relations.map((relation) => relation?.name).filter((name) => typeof name === 'string' && name.length > 0)
     : [];
+  const origin = now ? `出生在${city}，现在住在${now}` : `出生在${city}`;
   if (!city && names.length === 0) return '';
-  if (names.length === 0) return `出生在${city}。`;
-  return `出生在${city}；身边有${names.join('、')}。`;
+  if (names.length === 0) return `${origin}。`;
+  return `${origin}；身边有${names.join('、')}。`;
 }
 
 /**
@@ -735,7 +759,13 @@ export function fold(records, cfg, now) {
   const anchorAt = ageCorrection ? ageCorrection.at : birthAt;
   const anchorAge = ageCorrection ? ageCorrection.value : base.age;
   const birthDate = birthDateString(anchorAt, anchorAge, base.birthMonth, base.birthDay);
-  const lifeHistory = deriveLifeHistory(birth.data.seed, birthDate, base.birthCity, age);
+  // History is frozen: it keeps the move that the seed decided, even if she has since
+  // been moved somewhere else. Current location is state, not history.
+  const lifeHistory = deriveLifeHistory(birth.data.seed, birthDate, base.birthCity, age, {
+    currentCity: base.currentCity,
+    movedAt: base.movedAt,
+  });
+  const currentCity = overrides.has('city') ? String(overrides.get('city')) : base.currentCity;
 
   return {
     instanceId: birth.data.instanceId,
@@ -749,6 +779,7 @@ export function fold(records, cfg, now) {
     birthMonth: base.birthMonth,
     birthDay: base.birthDay,
     birthCity: base.birthCity,
+    currentCity,
     relations: base.relations,
     lifeHistory,
     job: overrides.has('job') ? String(overrides.get('job')) : job,

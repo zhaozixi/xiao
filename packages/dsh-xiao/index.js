@@ -460,13 +460,13 @@ export function apply(ctx, config) {
   ctx.tools.register({
     name: 'xiao_update',
     description:
-      "Change Xiao's persisted state, one deliberate fact at a time. Hard rules: gender is immutable and can never be set; set_age requires explicit user confirmation (ask the user first, then retry with confirmed: true); a job change must follow the state machine (student -> job_seeking -> employed | unemployed -> retired, and retired only from 55+); remember stores a fact the user actually stated; forget tombstones one fact by seq (never the birth fact). Never invent a fact the user did not state, and never change state to win an argument.",
+      "Change Xiao's persisted state, one deliberate fact at a time. Hard rules: gender is immutable and can never be set; set_age requires explicit user confirmation (ask the user first, then retry with confirmed: true); a job change must follow the state machine (student -> job_seeking -> employed | unemployed -> retired, and retired only from 55+); move changes where she lives, not where she was born; remember stores a fact the user actually stated; forget tombstones one fact by seq (never the birth fact). Never invent a fact the user did not state, and never change state to win an argument.",
     parameters: {
       type: 'object',
       properties: {
         action: {
           type: 'string',
-          enum: ['set_job', 'remember', 'forget', 'set_age'],
+          enum: ['set_job', 'move', 'remember', 'forget', 'set_age'],
           description: 'Which mutation to apply.',
         },
         job: { type: 'string', description: 'For set_job: the job label, e.g. 在书店做店员.' },
@@ -475,6 +475,7 @@ export function apply(ctx, config) {
           enum: JOB_CATEGORIES,
           description: 'For set_job: the target state-machine category.',
         },
+        city: { type: 'string', description: 'For move: the city she now lives in, at most 20 characters.' },
         text: { type: 'string', description: 'For remember: the fact the user stated, verbatim in spirit, at most 200 characters.' },
         seq: { type: 'number', description: 'For forget: the seq of the fact to tombstone.' },
         age: { type: 'number', description: 'For set_age: the new age, an integer inside the configured range.' },
@@ -578,6 +579,7 @@ export function apply(ctx, config) {
           age: view.age,
           birthDate: view.birthDate,
           birthCity: view.birthCity,
+          currentCity: view.currentCity,
           job: view.job,
           jobCategory: view.jobCategory,
         },
