@@ -549,10 +549,13 @@ export function apply(ctx, config) {
       },
       tone: view.tone,
       recent: view.recent,
+      knows: view.notes,
+      bornAt: view.bornAt,
       card: renderCard(view, cfg),
       factsCount: view.factCount,
       facts,
       pageRequests: { ...pageHits },
+      feed: feedState,
     };
   };
 
