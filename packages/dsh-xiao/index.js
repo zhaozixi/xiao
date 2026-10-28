@@ -174,6 +174,48 @@ export function apply(ctx, config) {
     return view;
   };
 
+  /**
+   * Let the past happen: materialize and pin every day between the birth (or the last
+   * sync) and yesterday. Runs at activation and whenever a new session starts, so the
+   * card's "recent" reflects a life that continued while nobody was looking. It never
+   * speaks and never changes the job — it only pins days that are already over.
+   */
+  let lifeSyncTask;
+  const syncLife = () => {
+    if (lifeSyncTask) return lifeSyncTask;
+    lifeSyncTask = (async () => {
+      try {
+        if (!state.ready || !state.domain || cfg.lifeEventsPerWeek <= 0) return;
+        const view = refresh();
+        if (!view) return;
+        const today = Math.floor(Date.now() / DAY_MS);
+        const birthDay = Number.isFinite(view.bornAt) ? Math.floor(view.bornAt / DAY_MS) : today;
+        const flags = state.domain.table('flags');
+        const marker = flags.get('lifeSynced');
+        const last = marker && Number.isFinite(marker.day) ? marker.day : birthDay;
+        const from = Math.max(last + 1, today - 60);
+        const to = today - 1;
+        if (to < from) return;
+        const days = today - from + 1;
+        const result = generateLife({ seed: view.seed, view, cfg, days, now: Date.now() });
+        const known = new Set((view.eventsAll ?? []).map((event) => event.id));
+        const pending = result.events.filter(
+          (event) => event.day >= from && event.day <= to && !known.has(event.id),
+        );
+        for (const event of pending) {
+          await writeFact('event', { id: event.id, day: event.day, kind: event.kind, text: event.text }, 'sim', 'confirmed');
+        }
+        await flags.put('lifeSynced', { day: to, at: Date.now() });
+        if (pending.length > 0) log('info', `life caught up: pinned ${pending.length} event(s) through day ${to}`);
+      } catch (error) {
+        log('warn', `life catch-up failed: ${error?.message ?? error}`);
+      } finally {
+        lifeSyncTask = undefined;
+      }
+    })();
+    return lifeSyncTask;
+  };
+
   ctx.effect(() => {
     let cancelled = false;
     let domain;
@@ -187,6 +229,7 @@ export function apply(ctx, config) {
       await ensureBirth();
       state.ready = true;
       log('info', `ready (instance ${state.view?.instanceId})`);
+      await syncLife();
     })().catch((error) => {
       state.failure = String(error?.message ?? error);
       log('warn', `storage open failed: ${state.failure}`);
@@ -210,6 +253,12 @@ export function apply(ctx, config) {
       firstMessageSeen.delete(session.id);
       introPending.delete(session.id);
     }
+  });
+
+  // A new session is the natural moment to catch her life up to yesterday. Fire and
+  // forget: it pins past days and never speaks, so it cannot delay or interrupt anything.
+  ctx.on('agent/created', () => {
+    void syncLife();
   });
 
   // The one and only Xiao introduces herself once: on the first user message of the

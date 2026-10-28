@@ -438,7 +438,9 @@ export function generateLife({ seed, view, cfg, days = 7, now = Date.now() }) {
   const cap = clamp(Math.floor(Number(cfg?.lifeEventsPerWeek ?? 0)), 0, 2);
   const span = clamp(Math.floor(Number(days) || 7), 1, 60);
   const today = Math.floor(now / DAY_MS);
-  const fromDay = today - span + 1;
+  // Nobody has a past before they were born: clamp the window to the birth day.
+  const birthDay = Number.isFinite(view?.bornAt) ? Math.floor(view.bornAt / DAY_MS) : undefined;
+  const fromDay = birthDay === undefined ? today - span + 1 : Math.max(today - span + 1, birthDay);
   const fromWeek = Math.floor(fromDay / 7);
   const toWeek = Math.floor(today / 7);
 
