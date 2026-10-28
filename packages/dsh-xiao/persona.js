@@ -769,6 +769,20 @@ const DAY_ACTIVITIES = {
     evening: ['刚下班', '在回家的地铁上'],
     night: ['在家瘫着', '在收拾屋子'],
   },
+  remote: {
+    morning: ['在家泡了杯咖啡，还没进入状态', '在改昨天的稿子'],
+    midday: ['自己煮了点东西', '下楼买了份饭'],
+    afternoon: ['在画新的稿子', '在和一个甲方来回改图'],
+    evening: ['在收尾，尽量今天弄完', '出门走了走，脑子还在转'],
+    night: ['在桌边坐着，没在工作', '在听唱片'],
+  },
+  shop: {
+    morning: ['在开店门', '在理货', '在擦柜台'],
+    midday: ['在店里凑合吃了口', '趁没客人在后屋坐了会儿'],
+    afternoon: ['在招呼客人', '在补货', '在收银'],
+    evening: ['在收尾，准备关门', '刚关店，在数钱箱'],
+    night: ['在家瘫着', '在算今天的账'],
+  },
   job_seeking: {
     morning: ['在投简历', '在改简历'],
     midday: ['随便吃了点', '在楼下散步，想事情'],
@@ -792,18 +806,12 @@ const DAY_ACTIVITIES = {
   },
 };
 
+/** The pool of a day's sentences for this view. More specific first, category last. */
 function activityPool(view) {
   const category = view?.jobCategory;
-  const remote = category === 'employed' && typeof view?.job === 'string' && view.job.includes('自由');
-  if (remote) {
-    return {
-      morning: ['在家泡了杯咖啡，还没进入状态', '在改昨天的稿子'],
-      midday: ['自己煮了点东西', '下楼买了份饭'],
-      afternoon: ['在画新的稿子', '在和一个甲方来回改图'],
-      evening: ['在收尾，尽量今天弄完', '出门走了走，脑子还在转'],
-      night: ['在桌边坐着，没在工作', '在听唱片'],
-    };
-  }
+  const job = typeof view?.job === 'string' ? view.job : '';
+  if (category === 'employed' && job.includes('自由')) return DAY_ACTIVITIES.remote;
+  if (category === 'employed' && /便利店|店员|小店|守店/.test(job)) return DAY_ACTIVITIES.shop;
   return DAY_ACTIVITIES[category] ?? DAY_ACTIVITIES.employed;
 }
 

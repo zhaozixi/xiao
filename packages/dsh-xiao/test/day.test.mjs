@@ -105,3 +105,15 @@ test('the label always agrees with the part of the day she is in', () => {
     assert.ok(line.startsWith(`此刻是${slotLabel(moment.slot)}`), `${hour}:${minute} produced ${line}`);
   }
 });
+
+test('the sentences fit the job she actually has', () => {
+  const text = (view) => deriveDay(view, NOON).map((slot) => slot.text).join('|');
+  const shop = text(viewOf('day-seed-8', 'employed', '在书店做店员'));
+  assert.ok(!shop.includes('开会') && !shop.includes('工位'), shop);
+  const remote = text(viewOf('day-seed-8', 'employed', '在做自由插画'));
+  assert.ok(!remote.includes('通勤') && !remote.includes('工位'), remote);
+  const office = text(viewOf('day-seed-8', 'employed', '在物流公司做调度'));
+  assert.ok(!office.includes('收银') && !office.includes('理货'), office);
+  const student = text(viewOf('day-seed-8', 'student', '还在读书'));
+  assert.ok(!student.includes('收银') && !student.includes('工位'), student);
+});
