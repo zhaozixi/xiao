@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { RULES_VERSION, derivePersona, fold, planUpdate, renderCard } from '../persona.js';
+import { RULES_VERSION, derivePersona, fold, generateLife, planUpdate, renderCard } from '../persona.js';
 
 const START = Date.UTC(2026, 9, 28, 9, 32, 0);
 const YEAR = 365.25 * 24 * 60 * 60 * 1000;
@@ -187,4 +187,25 @@ test('move refuses an empty or oversized city', () => {
   const ok = planUpdate({ action: 'move', city: '苏州' }, view);
   assert.equal(ok.ok, true);
   assert.deepEqual(ok.data, { field: 'city', value: '苏州' });
+});
+
+test('life events name the city she lives in and the people she knows', () => {
+  const born = START - 400 * 24 * 60 * 60 * 1000;
+  const view = fold([birth('place-seed-1', born)], { growthPerMonth: 1 / 12 }, START);
+  const names = view.relations.map((relation) => relation.name);
+  const texts = [];
+  for (let week = 0; week < 12; week += 1) {
+    const now = START + week * 7 * 24 * 60 * 60 * 1000;
+    const result = generateLife({ seed: view.seed, view, cfg: { lifeEventsPerWeek: 2 }, days: 60, now });
+    for (const event of result.events) texts.push(event.text);
+  }
+  assert.ok(
+    texts.some((text) => text.includes(view.currentCity)),
+    `no event mentioned ${view.currentCity}`,
+  );
+  assert.ok(
+    texts.some((text) => names.some((name) => text.includes(name))),
+    'no event mentioned anyone she knows',
+  );
+  assert.ok(texts.every((text) => !text.includes('{city}') && !text.includes('{person}')), 'a placeholder leaked');
 });

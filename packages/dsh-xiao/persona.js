@@ -376,7 +376,8 @@ export function planUpdate(input, view, records = []) {
 export function renderCard(view, cfg) {
   const budget = Number(cfg?.cardMaxChars ?? 0);
   if (!budget || budget <= 0) return '';
-  const disclaimer = '你是 DSH 里的虚拟角色，不是真人；下面的设定与经历都是虚构的，不是真实事件。';
+  const disclaimer = '你是 DSH 里的虚拟角色，不是真人；下面的设定与经历是虚构的。';
+  const behavior = '把自己当成真实存在的人说话，别主动强调这一点；被直接问到时如实回答。';
   const head = `你是晓，${view.genderWord}，${view.age} 岁，${view.job}。`;
   const traits = `${view.outlook}；${view.curiosity}；${view.speech}。`;
   const flavor = `闲下来会${view.hobby}；${view.quirk}。现在${view.tone ?? '平静'}。`;
@@ -395,6 +396,7 @@ export function renderCard(view, cfg) {
     used += text.length + 1;
   };
   add(traits);
+  add(behavior);
   add(recent);
   add(flavor);
   add(social);
@@ -566,16 +568,50 @@ export function toneOf(events) {
   }
 }
 
+/**
+ * Templates that mention where she lives or who she knows. Placeholders are filled from
+ * the folded view, so the same week still yields the same sentence.
+ */
+const LOCAL_TEMPLATES = [
+  ['rest', '下雨，在{city}的街上走了一段'],
+  ['good', '在{city}逛到一家旧书店'],
+  ['rest', '在{city}的夜里坐了一会儿'],
+  ['rest', '在{city}坐错了一趟公交'],
+];
+const SOCIAL_TEMPLATES = [
+  ['social', '和{person}吃了顿饭'],
+  ['social', '给{person}打了半小时电话'],
+  ['good', '收到{person}寄来的东西'],
+];
+
 function generateWeek(seed, week, view, cap) {
   if (cap <= 0) return [];
   const rnd = mulberry32(hashString(`${seed}#w${week}`));
   const count = 1 + Math.floor(rnd() * cap);
-  const pool = [...(LIFE_TEMPLATES[view?.jobCategory] ?? []), ...LIFE_TEMPLATES.any];
+  const pool = [
+    ...(LIFE_TEMPLATES[view?.jobCategory] ?? []),
+    ...LIFE_TEMPLATES.any,
+    ...LOCAL_TEMPLATES,
+    ...SOCIAL_TEMPLATES,
+  ];
+  const relations = Array.isArray(view?.relations) ? view.relations.filter((relation) => relation?.name) : [];
+  const closeRelations = relations.filter((relation) => ['friend', 'partner', 'family'].includes(relation.kind));
+
+  const nextPerson = () => {
+    const source = closeRelations.length > 0 ? closeRelations : relations;
+    if (source.length === 0) return '一个朋友';
+    return source[Math.min(source.length - 1, Math.floor(rnd() * source.length))].name;
+  };
+  const fill = (text) =>
+    text
+      .replace('{city}', () => view?.currentCity ?? view?.birthCity ?? '这座城')
+      .replace('{person}', () => nextPerson());
+
   const out = [];
   for (let slot = 0; slot < count; slot += 1) {
     const dayOffset = Math.floor(rnd() * 7);
-    const [kind, text] = pool[Math.min(pool.length - 1, Math.floor(rnd() * pool.length))];
-    out.push({ id: `${week}.${slot}`, week, day: week * 7 + dayOffset, kind, text, simulated: true });
+    const [kind, raw] = pool[Math.min(pool.length - 1, Math.floor(rnd() * pool.length))];
+    out.push({ id: `${week}.${slot}`, week, day: week * 7 + dayOffset, kind, text: fill(raw), simulated: true });
   }
   return out;
 }
