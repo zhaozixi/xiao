@@ -172,14 +172,15 @@ export function apply(ctx, config) {
 
   /**
    * Erase this instance and let a new one be born. Irreversible: every fact, the version
-   * history, the remembered user facts and the first-meeting marker are deleted.
+   * history, the remembered user facts, the first-meeting marker and everything she looked
+   * up on her own are deleted. Every table a new instance must not inherit belongs here.
    */
   const resetInstance = async () => {
     if (!state.domain) throw new Error('xiao storage is not ready');
-    const facts = state.domain.table('facts');
-    for (const key of [...facts.keys()]) await facts.delete(key);
-    const flags = state.domain.table('flags');
-    for (const key of [...flags.keys()]) await flags.delete(key);
+    for (const table of ['facts', 'flags', 'notes']) {
+      const handle = state.domain.table(table);
+      for (const key of [...handle.keys()]) await handle.delete(key);
+    }
     state.view = null;
     return ensureBirth();
   };
