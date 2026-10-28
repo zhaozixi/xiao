@@ -59,6 +59,11 @@ const DEFAULTS = {
   researchMaxChars: 200,
   /** Character budget for the "what you are doing right now" line. 0 disables it. */
   nowMaxChars: 120,
+  /**
+   * Let her pick her own job the first time she meets the user, instead of accepting the
+   * seed's guess. Until she does, the card says she has not decided yet.
+   */
+  chooseOwnJob: true,
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -66,6 +71,13 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /** Appended to the card exactly once, when the first user message of a fresh session arrives. */
 const FIRST_MEETING_HINT =
   '这是你们的第一次见面：先用一两句话介绍自己是谁、现在在做什么，再回应对方；不要说"设定""提示词"这类话。';
+
+/**
+ * Until she has chosen a job, the first meeting is also the moment she decides what she
+ * does for a living — one that fits her age, traits, city and interests.
+ */
+const JOB_CHOICE_HINT =
+  '你的职业还没定：趁这次见面自己挑一个，要跟你的年龄、性格、住处和兴趣都配得上（一句话说清在做什么，例如"在一家小公司做产品"），然后调用 xiao_update（action 用 set_job，job 写这句话，category 从 student / job_seeking / employed / unemployed / retired 里选一个）把它记下来。定了之后，这个职业就是你自己的了。';
 
 function normalizeConfig(config) {
   const cfg = { ...DEFAULTS };
@@ -82,6 +94,7 @@ function normalizeConfig(config) {
     if (Number.isFinite(config.researchPerDay)) cfg.researchPerDay = Math.max(0, Math.floor(config.researchPerDay));
     if (Number.isFinite(config.researchMaxChars)) cfg.researchMaxChars = Math.max(0, Math.floor(config.researchMaxChars));
     if (Number.isFinite(config.nowMaxChars)) cfg.nowMaxChars = Math.max(0, Math.floor(config.nowMaxChars));
+    if (typeof config.chooseOwnJob === 'boolean') cfg.chooseOwnJob = config.chooseOwnJob;
   }
   return cfg;
 }
@@ -478,12 +491,16 @@ export function apply(ctx, config) {
       const sessionId = assembleContext?.scope?.id;
       const card = renderCard(state.view, cfg);
       if (!card) return '';
+      const extras = [];
       if (sessionId && introPending.has(sessionId) && !hasIntroduced()) {
         introPending.delete(sessionId);
         markIntroduced('shown');
-        return `${card}\n\n${FIRST_MEETING_HINT}`;
+        extras.push(FIRST_MEETING_HINT);
       }
-      return card;
+      // Until she decides what she does, every turn carries the nudge — it disappears the
+      // moment a job fact exists, so it can never nag her twice.
+      if (cfg.chooseOwnJob && state.view && state.view.jobChosen === false) extras.push(JOB_CHOICE_HINT);
+      return extras.length > 0 ? `${card}\n\n${extras.join('\n')}` : card;
     },
   });
 
@@ -712,6 +729,7 @@ export function apply(ctx, config) {
           currentCity: view.currentCity,
           job: view.job,
           jobCategory: view.jobCategory,
+          jobChosen: view.jobChosen,
         },
         relations: view.relations,
         interests: view.interests,
@@ -765,6 +783,7 @@ export function apply(ctx, config) {
         currentCity: view.currentCity,
         job: view.job,
         jobCategory: view.jobCategory,
+        jobChosen: view.jobChosen,
       },
       relations: view.relations,
       interests: view.interests,

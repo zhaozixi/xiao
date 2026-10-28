@@ -183,6 +183,9 @@ export function deriveWork(seed, city, job, jobCategory) {
   if (jobCategory === 'job_seeking' || jobCategory === 'unemployed' || jobCategory === 'retired') {
     return { work: null, commute: '现在没有固定要去的班' };
   }
+  if (jobCategory === 'undecided') {
+    return { work: null, commute: '还没有固定的去处' };
+  }
   if (typeof job === 'string' && job.includes('自由')) {
     return { work: { city, area: '家里那张桌子', name: '家里那张桌子', detail: '在家工作，没有通勤' }, commute: '没有通勤' };
   }
@@ -437,8 +440,14 @@ export function planUpdate(input, view, records = []) {
     const category = String(args.category ?? '');
     if (job.length === 0) return { ok: false, code: 'missing_job', reason: 'job 不能为空' };
     if (job.length > 40) return { ok: false, code: 'job_too_long', reason: 'job 超过 40 字' };
-    const check = canTransitionJob(view.jobCategory, category, view.age);
-    if (!check.ok) return check;
+    // The very first choice is free: she is picking who she is, not moving between jobs.
+    // Every later change has to obey the state machine.
+    if (view.jobChosen !== false) {
+      const check = canTransitionJob(view.jobCategory, category, view.age);
+      if (!check.ok) return check;
+    } else if (!JOB_CATEGORIES.includes(category)) {
+      return { ok: false, code: 'unknown_category', reason: `未知 category：${category}` };
+    }
     return { ok: true, kind: 'job', data: { job, category }, source: 'model' };
   }
 
@@ -505,7 +514,9 @@ export function renderCard(view, cfg) {
   if (!budget || budget <= 0) return '';
   const disclaimer = '你是 DSH 里的虚拟角色，不是真人；下面的设定与经历是虚构的。';
   const behavior = '把自己当成真实存在的人说话，别主动强调这一点；被直接问到时如实回答。';
-  const head = `你是晓，${view.genderWord}，${view.age} 岁，${view.job}。`;
+  // Before she has chosen a job, the seed's guess must not read as fact.
+  const undecided = view.jobChosen === false && cfg?.chooseOwnJob !== false;
+  const head = `你是晓，${view.genderWord}，${view.age} 岁，${undecided ? '还没定下做什么工作' : view.job}。`;
   const traits = `${view.outlook}；${view.curiosity}；${view.speech}。`;
   const flavor = `闲下来会${view.hobby}；${view.quirk}。现在${view.tone ?? '平静'}。`;
   const recent = view.recent && view.recent.length > 0 ? `最近：${view.recent[0]}。` : '';
@@ -783,6 +794,13 @@ const DAY_ACTIVITIES = {
     evening: ['在收尾，准备关门', '刚关店，在数钱箱'],
     night: ['在家瘫着', '在算今天的账'],
   },
+  undecided: {
+    morning: ['睡到自然醒', '在屋里收拾东西'],
+    midday: ['煮了碗面', '下楼买了点东西'],
+    afternoon: ['在电脑前坐了一下午，没干什么正事', '在想要做点什么'],
+    evening: ['出门走了走', '在楼下坐着看人'],
+    night: ['在刷手机', '在听点东西'],
+  },
   job_seeking: {
     morning: ['在投简历', '在改简历'],
     midday: ['随便吃了点', '在楼下散步，想事情'],
@@ -810,6 +828,7 @@ const DAY_ACTIVITIES = {
 function activityPool(view) {
   const category = view?.jobCategory;
   const job = typeof view?.job === 'string' ? view.job : '';
+  if (view?.jobChosen === false) return DAY_ACTIVITIES.undecided;
   if (category === 'employed' && job.includes('自由')) return DAY_ACTIVITIES.remote;
   if (category === 'employed' && /便利店|店员|小店|守店/.test(job)) return DAY_ACTIVITIES.shop;
   return DAY_ACTIVITIES[category] ?? DAY_ACTIVITIES.employed;
@@ -1144,6 +1163,7 @@ export function fold(records, cfg, now) {
   const events = [];
   let job = base.job;
   let jobCategory = base.jobCategory;
+  let jobChosen = false;
   let ageCorrection;
 
   for (const fact of facts) {
@@ -1164,6 +1184,7 @@ export function fold(records, cfg, now) {
     } else if (fact.kind === 'job') {
       if (typeof fact.data.job === 'string' && fact.data.job.length > 0) job = fact.data.job;
       if (JOB_CATEGORIES.includes(fact.data.category)) jobCategory = fact.data.category;
+      jobChosen = true;
     } else if (fact.kind === 'event') {
       events.push({
         id: String(fact.data.id ?? ''),
@@ -1204,7 +1225,7 @@ export function fold(records, cfg, now) {
   const currentCity = overrides.has('city') ? String(overrides.get('city')) : base.currentCity;
   // Places follow the *current* city and the *current* job: move her and the flat moves
   // with her; lose the job and the workplace disappears.
-  const places = derivePlaces(birth.data.seed, currentCity, job, jobCategory);
+  const places = derivePlaces(birth.data.seed, currentCity, job, jobChosen ? jobCategory : 'undecided');
 
   return {
     instanceId: birth.data.instanceId,
@@ -1228,6 +1249,7 @@ export function fold(records, cfg, now) {
     nearby: [...new Set([...places.nearby, ...nearbyAdditions])].slice(0, 12),
     job: overrides.has('job') ? String(overrides.get('job')) : job,
     jobCategory,
+    jobChosen,
     outlook: base.outlook,
     curiosity: base.curiosity,
     speech: base.speech,

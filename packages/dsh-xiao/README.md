@@ -57,6 +57,7 @@ dsh --profile <name> ...   # 具体以 plugin_manager 返回为准
 | `researchPerDay` | `2` | 她每天可以自己上网查几件事；`0` 关闭 |
 | `researchMaxChars` | `200` | "你最近自己查过这些"那一块的预算；`0` 关闭 |
 | `nowMaxChars` | `120` | "此刻你在做什么"那一行的预算；`0` 关闭 |
+| `chooseOwnJob` | `true` | 职业由她在第一次见面时自己挑，而不是继承种子的默认值；`false` 时直接用种子给的那个 |
 
 > 要"只在名为 `xiao` 的 preset 里出现"，设 `enabledForPresets: ["xiao"]`。
 
@@ -79,6 +80,8 @@ dsh --profile <name> ...   # 具体以 plugin_manager 返回为准
 `remember` 写进去的事会以「关于对方，你记得这些」单独注入（见 §4 的 `userSummaryMaxChars`），`forget` 之后立刻消失。`set_age` 是一次**新的起点**，不是冻结：更正之后仍按 `growthPerMonth` 继续长。
 
 `move` 只改**现居城市**（`override {field: "city"}`），既不改出生地，也不改人生大事记——大事记是冻结的过去。`place` 追加一个她熟悉的地点（`override {field: "nearby"}`），多次调用是追加而不是覆盖。
+
+**她第一次定职业不受状态机约束**：`jobChosen: false` 时 `set_job` 可以选任意分类，因为那是在决定"我是谁"，不是在换工作。一旦写下第一条 job 事实，后续所有变更都必须走状态机（employed 不能直接回到 employed，退休必须 55 岁以上）。
 
 `xiao_reset` 清空后立即重新投胎，性别/年龄/职业/性格全部重抽；**已经写进会话日志的对话不会被删除**。守卫（`ctx.tools.guard()`）在 `confirm` 不是字面量 `"reset"` 时直接拒绝。
 

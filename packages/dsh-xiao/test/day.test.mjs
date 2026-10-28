@@ -16,7 +16,7 @@ function viewOf(seed, jobCategory = 'employed', job = '在一家小公司做产�
     source: 'seed',
     evidence: 'confirmed',
   };
-  return { ...fold([birth], {}, NOON), jobCategory, job };
+  return { ...fold([birth], {}, NOON), jobCategory, job, jobChosen: true };
 }
 
 test('a day has five parts that cover the whole clock', () => {
@@ -116,4 +116,28 @@ test('the sentences fit the job she actually has', () => {
   assert.ok(!office.includes('收银') && !office.includes('理货'), office);
   const student = text(viewOf('day-seed-8', 'student', '还在读书'));
   assert.ok(!student.includes('收银') && !student.includes('工位'), student);
+});
+
+test('before she picks a job, her day has no workplace in it', () => {
+  const view = fold(
+    [
+      {
+        seq: 1,
+        at: NOON,
+        kind: 'birth',
+        data: { instanceId: 'u', seed: 'day-seed-9', birthAt: NOON, rulesVersion: RULES_VERSION },
+        source: 'seed',
+        evidence: 'confirmed',
+      },
+    ],
+    {},
+    NOON,
+  );
+  assert.equal(view.jobChosen, false);
+  assert.equal(view.work, null, 'no job, no workplace');
+  assert.ok(view.commute.includes('没有'));
+  const text = deriveDay(view, NOON)
+    .map((slot) => slot.text)
+    .join('|');
+  assert.ok(!text.includes('开会') && !text.includes('工位') && !text.includes('收银'), text);
 });

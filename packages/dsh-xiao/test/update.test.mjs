@@ -63,9 +63,19 @@ test('set_job follows the state machine from the current category', () => {
   assert.equal(ok.ok, true);
   assert.deepEqual(ok.data, { job: '在书店做店员', category: 'employed' });
 
-  const bad = planUpdate({ action: 'set_job', job: '还在读书', category: 'student' }, { ...view, jobCategory: 'employed' });
+  const bad = planUpdate({ action: 'set_job', job: '还在读书', category: 'student' }, { ...view, jobCategory: 'employed', jobChosen: true });
   assert.equal(bad.ok, false);
   assert.equal(bad.code, 'illegal_job_transition');
+});
+
+test('the first job choice is free, later changes are not', () => {
+  const undecided = { ...viewFor(), jobChosen: false, jobCategory: 'employed' };
+  const free = planUpdate({ action: 'set_job', job: '还在读书', category: 'student' }, undecided);
+  assert.equal(free.ok, true, 'she may pick any category before she has a job');
+
+  const bogus = planUpdate({ action: 'set_job', job: '在书店做店员', category: 'astronaut' }, undecided);
+  assert.equal(bogus.ok, false);
+  assert.equal(bogus.code, 'unknown_category');
 });
 
 test('remember refuses empty and oversized text', () => {

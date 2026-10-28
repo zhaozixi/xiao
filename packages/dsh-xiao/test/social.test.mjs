@@ -214,14 +214,30 @@ test('life events name the city she lives in and the people she knows', () => {
 // Where exactly
 // ---------------------------------------------------------------------------
 
-test('she has one flat, three familiar spots, and somewhere to be', () => {
+test('she has one flat, three familiar spots, and somewhere to be once she has a job', () => {
   const view = fold([birth('place-seed-2')], { growthPerMonth: 1 / 12 }, START);
   assert.equal(view.home.city, view.currentCity);
   assert.ok(view.home.area && view.home.detail);
   assert.equal(view.nearby.length, 3);
   assert.equal(new Set(view.nearby).size, 3, 'familiar spots must be distinct');
-  assert.ok(view.work && view.work.area, 'she needs a workplace or a school');
-  assert.ok(typeof view.commute === 'string' && view.commute.length > 0);
+  assert.equal(view.jobChosen, false);
+  assert.equal(view.work, null, 'before she picks a job there is nowhere to be');
+
+  const hired = {
+    seq: 2,
+    at: START + 1,
+    kind: 'job',
+    data: { job: '在书店做店员', category: 'employed' },
+    source: 'model',
+    evidence: 'confirmed',
+  };
+  const after = fold([birth('place-seed-2'), hired], { growthPerMonth: 1 / 12 }, START + 1);
+  assert.ok(after.work && after.work.area, 'once she has a job she has somewhere to be');
+  assert.ok(typeof after.commute === 'string' && after.commute.length > 0);
+});
+
+test('the flat does not move when the job changes', () => {
+  const view = fold([birth('place-seed-2')], { growthPerMonth: 1 / 12 }, START);
   assert.deepEqual(fold([birth('place-seed-2')], { growthPerMonth: 1 / 12 }, START).home, view.home);
 });
 
