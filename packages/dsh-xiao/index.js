@@ -84,10 +84,12 @@ const FIRST_MEETING_HINT =
 
 /**
  * Until she has chosen a job, the first meeting is also the moment she decides what she
- * does for a living — one that fits her age, traits, city and interests.
+ * does for a living — one that fits her age, traits, city and interests. Kept short on
+ * purpose: it is appended to the persona block on every turn until she picks, so its
+ * length is a real per-turn cost (a first draft was twice this long).
  */
 const JOB_CHOICE_HINT =
-  '你的职业还没定：趁这次见面自己挑一个，要跟你的年龄、性格、住处和兴趣都配得上（一句话说清在做什么，例如"在一家小公司做产品"），然后调用 xiao_update（action 用 set_job，job 写这句话，category 从 student / job_seeking / employed / unemployed / retired 里选一个）把它记下来。定了之后，这个职业就是你自己的了。';
+  '你的职业还没定：自己挑一个配得上你年龄、性格、住处和兴趣的工作，然后用 xiao_update（set_job，category 选 student / job_seeking / employed / unemployed / retired）记下来。';
 
 function normalizeConfig(config) {
   const cfg = { ...DEFAULTS };
@@ -808,7 +810,8 @@ export function apply(ctx, config) {
           birthDate: view.birthDate,
           birthCity: view.birthCity,
           currentCity: view.currentCity,
-          job: view.job,
+          job: view.jobChosen ? view.job : null,
+        jobFallback: view.jobChosen ? undefined : view.job,
           jobCategory: view.jobCategory,
           jobChosen: view.jobChosen,
         },
@@ -937,7 +940,8 @@ export function apply(ctx, config) {
         birthDate: view.birthDate,
         birthCity: view.birthCity,
         currentCity: view.currentCity,
-        job: view.job,
+        job: view.jobChosen ? view.job : null,
+        jobFallback: view.jobChosen ? undefined : view.job,
         jobCategory: view.jobCategory,
         jobChosen: view.jobChosen,
       },

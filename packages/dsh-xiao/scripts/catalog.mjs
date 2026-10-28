@@ -1,7 +1,14 @@
 /**
  * Render the catalogue of every pool the generator draws from, as markdown.
- * Run: node scripts/catalog.mjs > POOLS.md
+ * Run: node scripts/catalog.mjs --write   (writes POOLS.md as UTF-8)
+ *      node scripts/catalog.mjs           (prints to stdout)
+ *
+ * Writing from Node rather than shell redirection is deliberate: PowerShell's `>` encodes
+ * UTF-16 by default, which turns the file into mojibake.
  */
+import { writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import { CATALOG } from '../persona.js';
 
 const out = [];
@@ -82,12 +89,15 @@ table(
 
 push('## 关系');
 push();
+const pairList = (pairs) => pairs.map(([role, detail]) => `${role} — ${detail}`).join('；');
 table(
   [
-    ['母亲 / 父亲（必有）', '姓氏池 + 对应性别名字池', list(CATALOG.relations.parentDetail)],
+    ['母亲 / 父亲（没搬过家）', '姓氏池 + 对应性别名字池', list(CATALOG.relations.parentDetail.stayed)],
+    ['母亲 / 父亲（搬过家）', '姓氏池 + 对应性别名字池', list(CATALOG.relations.parentDetail.away)],
     ['朋友', list(CATALOG.relations.friend.roles), list(CATALOG.relations.friend.detail)],
     ['同学（学生）', list(CATALOG.relations.classmate.roles), list(CATALOG.relations.classmate.detail)],
-    ['同事（在职）', list(CATALOG.relations.work.roles), list(CATALOG.relations.work.detail)],
+    ['同事（在职、坐班）', pairList(CATALOG.relations.work.office), '角色与细节成对抽取'],
+    ['合作方（在职、自由职业）', pairList(CATALOG.relations.work.remote), '角色与细节成对抽取'],
     ['伴侣（25+，约 45%）', '与她自己性别相反的取名池', list(CATALOG.relations.partnerDetail)],
     ['孩子（32+ 且有伴侣，约 40%）', '女儿 / 儿子', list(CATALOG.relations.childDetail)],
   ],
@@ -168,7 +178,14 @@ push('{出生在 X，现在住在 Y 的 Z}；身边有 A、B、C。');
 push('你是 DSH 里的虚拟角色，不是真人；下面的设定与经历是虚构的。');
 push('```');
 push();
-push('前三行固定（可缓存），后面每一行按 `cardMaxChars` 从尾部依次放弃，免责声明永远保留。');
+push('免责声明在预算里先被预留，其余各行按 性格 → 行为 → 近况 → 日常 → 社交 的顺序整行尝试加入，放不下的那一行跳过。');
 push();
 
-process.stdout.write(`${out.join('\n')}\n`);
+const content = `${out.join('\n')}\n`;
+if (process.argv.includes('--write')) {
+  const here = dirname(fileURLToPath(import.meta.url));
+  writeFileSync(join(here, '..', 'POOLS.md'), content, 'utf8');
+  process.stderr.write('wrote POOLS.md\n');
+} else {
+  process.stdout.write(content);
+}

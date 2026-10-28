@@ -99,11 +99,30 @@ const SURNAMES = ['张', '王', '李', '陈', '刘', '周', '吴', '徐', '孙',
 const GIVEN_FEMALE = ['婧', '婷', '悦', '楠', '若', '岚', '敏', '嘉'];
 const GIVEN_MALE = ['航', '磊', '阳', '帆', '鹏', '川', '岑', '斌'];
 
-const PARENT_DETAIL = ['在老家，每周通一次电话', '同城，偶尔过来吃饭', '总担心她的工作不稳定', '身体还好，就是嘴上不饶人'];
+/**
+ * Parents stay where she was born. "同城，偶尔过来吃饭" is only true for a daughter who
+ * never moved away, so the pool depends on that.
+ */
+const PARENT_DETAIL_STAYED = ['同城，偶尔过来吃饭', '总担心她的工作不稳定', '身体还好，就是嘴上不饶人'];
+const PARENT_DETAIL_AWAY = ['在老家，每周通一次电话', '总担心她的工作不稳定', '身体还好，就是嘴上不饶人'];
 const FRIEND_ROLES = ['大学同学', '高中同学', '发小', '老邻居'];
 const FRIEND_DETAIL = ['常一起散步', '很久没联系了', '偶尔约着吃饭', '会互相吐槽工作'];
-const WORK_ROLES = ['同事', '前同事', '合作过的编辑', '常约稿的甲方'];
-const WORK_DETAIL = ['同一个组，午饭常一起吃', '工位在隔壁，交接班时会聊两句', '偶尔下班一起走一段', '上次帮忙顶了个班'];
+/**
+ * Role and detail are paired, not drawn independently: "合作过的编辑" who "顶了个班" is
+ * two true facts about nobody.
+ */
+const WORK_RELATIONS_OFFICE = [
+  ['同事', '同一个组，午饭常一起吃'],
+  ['同事', '工位在隔壁，交接班时会聊两句'],
+  ['前同事', '偶尔下班一起走一段'],
+  ['前同事', '上次帮忙顶了个班'],
+];
+const WORK_RELATIONS_REMOTE = [
+  ['合作过的编辑', '偶尔一起接活'],
+  ['常约稿的甲方', '上次合作之后就没再聊过'],
+  ['前同事', '偶尔下班一起走一段'],
+  ['合作过的编辑', '上次合作之后就没再聊过'],
+];
 const CLASS_ROLES = ['同班同学', '同宿舍的室友', '一起赶作业的朋友'];
 const CLASS_DETAIL = ['经常一起去图书馆', '这学期见面少了', '上次小组作业一起熬到很晚'];
 /** What she gravitates to on her own: three of these, and they drive what she reads. */
@@ -218,9 +237,11 @@ export function derivePlaces(seed, city, job, jobCategory) {
  * @param {Function} rnd - seeded generator, shared with the rest of the persona.
  * @param {string} jobCategory - the category chosen at birth.
  * @param {number} age - the age at birth.
+ * @param {{moved?: boolean, remote?: boolean}} shape - whether she left her birth city, and
+ *   whether she works for herself. Both change what the cast can plausibly be.
  * @returns {object[]} relations.
  */
-function deriveRelations(rnd, jobCategory, age) {
+function deriveRelations(rnd, jobCategory, age, shape = {}) {
   const used = new Set();
   const nextFrom = (pool) => {
     for (let attempt = 0; attempt < 8; attempt += 1) {
@@ -235,16 +256,18 @@ function deriveRelations(rnd, jobCategory, age) {
     return fallback;
   };
   const anyName = () => nextFrom(rnd() < 0.5 ? GIVEN_FEMALE : GIVEN_MALE);
+  const parentPool = shape.moved ? PARENT_DETAIL_AWAY : PARENT_DETAIL_STAYED;
 
   const relations = [
-    { id: 'mother', kind: 'family', role: '母亲', name: nextFrom(GIVEN_FEMALE), detail: pick(rnd, PARENT_DETAIL) },
-    { id: 'father', kind: 'family', role: '父亲', name: nextFrom(GIVEN_MALE), detail: pick(rnd, PARENT_DETAIL) },
+    { id: 'mother', kind: 'family', role: '母亲', name: nextFrom(GIVEN_FEMALE), detail: pick(rnd, parentPool) },
+    { id: 'father', kind: 'family', role: '父亲', name: nextFrom(GIVEN_MALE), detail: pick(rnd, parentPool) },
     { id: 'friend', kind: 'friend', role: pick(rnd, FRIEND_ROLES), name: anyName(), detail: pick(rnd, FRIEND_DETAIL) },
   ];
   if (jobCategory === 'student') {
     relations.push({ id: 'classmate', kind: 'classmate', role: pick(rnd, CLASS_ROLES), name: anyName(), detail: pick(rnd, CLASS_DETAIL) });
   } else {
-    relations.push({ id: 'work', kind: 'work', role: pick(rnd, WORK_ROLES), name: anyName(), detail: pick(rnd, WORK_DETAIL) });
+    const [role, detail] = pick(rnd, shape.remote ? WORK_RELATIONS_REMOTE : WORK_RELATIONS_OFFICE);
+    relations.push({ id: 'work', kind: 'work', role, name: anyName(), detail });
   }
 
   const hasPartner = age >= 25 && rnd() < 0.45;
@@ -340,11 +363,16 @@ export function derivePersona(seed) {
   const birthMonth = 1 + Math.floor(rnd() * 12);
   const birthDay = 1 + Math.floor(rnd() * 28);
   const birthCity = pick(rnd, BIRTH_CITIES);
-  const relations = deriveRelations(rnd, chosen.category, age);
   // Most adults moved away at some point; the rest stayed in the city they were born in.
+  // Drawn before the cast, because the cast depends on it: parents in another city cannot
+  // also be "同城".
   const movedAway = rnd() < 0.55;
   const movedAt = movedAway ? (age >= 22 ? 22 : 18) : undefined;
   const currentCity = movedAway ? pick(rnd, BIRTH_CITIES.filter((city) => city !== birthCity)) : birthCity;
+  const relations = deriveRelations(rnd, chosen.category, age, {
+    moved: movedAway,
+    remote: chosen.job.includes('自由'),
+  });
   // Three interests, drawn without replacement, so two of them can never be the same.
   const interests = [];
   const interestPool = [...INTERESTS];
@@ -1612,9 +1640,9 @@ export const CATALOG = {
   surnames: SURNAMES,
   givenNames: { female: GIVEN_FEMALE, male: GIVEN_MALE },
   relations: {
-    parentDetail: PARENT_DETAIL,
+    parentDetail: { stayed: PARENT_DETAIL_STAYED, away: PARENT_DETAIL_AWAY },
     friend: { roles: FRIEND_ROLES, detail: FRIEND_DETAIL },
-    work: { roles: WORK_ROLES, detail: WORK_DETAIL },
+    work: { office: WORK_RELATIONS_OFFICE, remote: WORK_RELATIONS_REMOTE },
     classmate: { roles: CLASS_ROLES, detail: CLASS_DETAIL },
     partnerDetail: PARTNER_DETAIL,
     childDetail: CHILD_DETAIL,

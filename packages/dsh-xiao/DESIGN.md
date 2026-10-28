@@ -569,7 +569,7 @@ node --test test/*.test.mjs
 node bench/report.mjs
 ```
 
-**池子清单**由 `node scripts/catalog.mjs > POOLS.md` 生成，与代码同源，不会走样。
+**池子清单**由 `node scripts/catalog.mjs --write` 生成（由 Node 直接写 UTF-8；不要用 shell 重定向——PowerShell 的 `>` 会写成 UTF-16），与代码同源，不会走样。
 
 ---
 

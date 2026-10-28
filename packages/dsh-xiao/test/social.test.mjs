@@ -66,8 +66,10 @@ test('the life history runs from birth to now, in order', () => {
   assert.equal(history[0].text, `出生在${view.birthCity}`);
   assert.equal(history[0].date, view.birthDate);
   for (let index = 1; index < history.length; index += 1) {
-    assert.ok(history[index].date > history[index - 1].date, 'milestones must be ordered');
-    assert.ok(history[index].age > history[index - 1].age);
+    // Two things can happen on the same day (毕业 and 搬到另一个城市), so the order must be
+    // non-decreasing rather than strictly increasing.
+    assert.ok(history[index].date >= history[index - 1].date, 'milestones must be ordered');
+    assert.ok(history[index].age >= history[index - 1].age);
   }
   assert.ok(history[history.length - 1].age <= view.age, 'nothing may happen after her current age');
 });
