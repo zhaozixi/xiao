@@ -840,19 +840,56 @@ export function researchQuery(view, day) {
 }
 
 /**
+ * Characters that exist only in traditional Chinese. Every entry must be one that a
+ * simplified text cannot contain — 路 and 案 are identical in both scripts and are
+ * therefore absent, as are ambiguous ones such as 著 and 於. One occurrence is enough
+ * evidence; a false positive would silently erase an honest memory.
+ */
+const TRADITIONAL_ONLY = new Set(
+  [
+    ...'們個這來時為與說會國學書車話語實現點間題發東開關頭樣體長問場對觀裝幀灣練歲萬專業圖館報導倫藝術傳錄電郵腦網軟資訊檔設區選單錯綜複雜',
+    ...'養講標準據應該讓幾過進還條類種給統計驗證確認識覺歷聲響陰陽織繞綠紅線絡級結論談討誌載頁麵雞鳥龍馬魚門飛風雲願邊變遠運遲適鄉醫釋鐘鐵銀錢鏡閉隊階隨難雙離靈靜頂順須預領頻顆飯飲飽餘髮鬥麗黨齊齒龜',
+  ].filter((char) => char.trim().length === 1),
+);
+
+/**
+ * Whether a piece of text looks like it was written in traditional Chinese.
+ * @param {string} text - candidate text.
+ * @returns {boolean} true when it contains a character that only exists in traditional.
+ */
+export function looksTraditional(text) {
+  if (typeof text !== 'string') return false;
+  for (const char of text) if (TRADITIONAL_ONLY.has(char)) return true;
+  return false;
+}
+
+/**
  * Compress one search into the one or two sentences she would remember.
+ *
+ * Sources in traditional Chinese are skipped rather than converted: she writes simplified,
+ * so a verbatim traditional title in her memory would be her quoting a Taiwanese site —
+ * possible, but not what reading a search result normally leaves behind. The provider's
+ * own `content` is used when it is not traditional.
  * @param {object} result - a WebSearchResult.
  * @returns {string} at most 200 characters, possibly empty.
  */
 export function summarizeSearch(result) {
   const parts = [];
-  if (typeof result?.content === 'string' && result.content.trim().length > 0) parts.push(result.content.trim());
+  const content = typeof result?.content === 'string' ? result.content.trim() : '';
+  if (content.length > 0 && !looksTraditional(content)) parts.push(content);
   for (const source of Array.isArray(result?.sources) ? result.sources : []) {
-    const line = source?.title ?? source?.snippet;
-    if (typeof line === 'string' && line.trim().length > 0) parts.push(line.trim());
+    const line = (source?.title ?? source?.snippet ?? '').trim();
+    if (line.length > 0 && !looksTraditional(line)) parts.push(line);
     if (parts.length >= 3) break;
   }
   return parts.join('；').replace(/\s+/g, ' ').slice(0, 200);
+}
+
+/** The sources worth keeping alongside a summary: same language rule as the summary. */
+export function usableSources(result) {
+  return (Array.isArray(result?.sources) ? result.sources : []).filter(
+    (source) => !looksTraditional(source?.title ?? '') && !looksTraditional(source?.snippet ?? ''),
+  );
 }
 
 /**

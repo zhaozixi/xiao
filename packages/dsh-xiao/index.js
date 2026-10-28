@@ -33,6 +33,8 @@ import {
   researchQuery,
   suggestTransition,
   summarizeSearch,
+  usableSources,
+  looksTraditional,
   currentMoment,
   localDay,
   slotLabel,
@@ -285,12 +287,14 @@ export function apply(ctx, config) {
     return { label: slotLabel(moment.slot), text: moment.text, slot: moment.slot, plan: moment.plan };
   };
 
-  /** Notes she wrote for herself, oldest first. */
+  /** Notes she wrote for herself, oldest first. A note in traditional characters is not
+   * something she would have written, so it stays in storage but is not surfaced. */
   const researchNotes = () => {
     if (!state.domain) return [];
     try {
       return [...state.domain.table('notes').entries()]
         .map(([, note]) => note)
+        .filter((note) => !looksTraditional(note?.summary))
         .sort((a, b) => a.at - b.at);
     } catch (error) {
       return [];
@@ -331,7 +335,7 @@ export function apply(ctx, config) {
           day: today,
           query,
           summary,
-          sources: (Array.isArray(result?.sources) ? result.sources : []).slice(0, 3).map((source) => ({
+          sources: usableSources(result).slice(0, 3).map((source) => ({
             title: source?.title,
             url: source?.url,
           })),

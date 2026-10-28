@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { RULES_VERSION, fold, renderResearch, researchQuery, summarizeSearch } from '../persona.js';
+import { RULES_VERSION, fold, looksTraditional, renderResearch, researchQuery, summarizeSearch, usableSources } from '../persona.js';
 
 const START = Date.UTC(2026, 9, 28, 9, 32, 0);
 
@@ -60,6 +60,41 @@ test('a search is compressed to something short', () => {
 test('an empty search yields nothing worth remembering', () => {
   assert.equal(summarizeSearch({ sources: [], truncated: false }), '');
   assert.equal(summarizeSearch(undefined), '');
+});
+
+// ---------------------------------------------------------------------------
+// She writes simplified characters
+// ---------------------------------------------------------------------------
+
+test('traditional sources are not quoted into her memory', () => {
+  const result = {
+    sources: [
+      { title: '觀葉植物', url: 'https://a' },
+      { title: '选购盆花，别只看颜值（信息服务台）', url: 'https://b' },
+      { title: '裝幀事典:倫敦書籍藝術中心, 手工裝幀創作技法全書', url: 'https://c' },
+    ],
+  };
+  const summary = summarizeSearch(result);
+  assert.equal(summary, '选购盆花，别只看颜值（信息服务台）');
+  assert.deepEqual(usableSources(result).map((source) => source.url), ['https://b']);
+});
+
+test('a traditional provider summary is dropped rather than converted', () => {
+  const result = { content: '這是一段繁體中文的摘要，講的是植物養護。', sources: [{ title: '植物養護', url: 'https://a' }] };
+  assert.equal(summarizeSearch(result), '');
+});
+
+test('the traditional check does not fire on simplified text', () => {
+  assert.equal(looksTraditional('他的職業是編輯'), true);
+  assert.equal(looksTraditional('他的职业是编辑'), false);
+  assert.equal(looksTraditional(''), false);
+  assert.equal(looksTraditional(undefined), false);
+  // 著 and 於 exist in simplified too, so they are not in the set.
+  assert.equal(looksTraditional('著名设计师'), false);
+  // 路 and 案 are identical in both scripts: a false positive here would erase honest
+  // simplified memories, which is worse than letting a traditional title through.
+  assert.equal(looksTraditional('这条路线的方案'), false);
+  assert.equal(looksTraditional('图书馆里的植物养护'), false);
 });
 
 test('her notes render in their own block, newest first, within budget', () => {
