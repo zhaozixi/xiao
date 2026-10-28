@@ -57,6 +57,8 @@ dsh --profile <name> ...   # 具体以 plugin_manager 返回为准
 | `researchPerDay` | `2` | 她每天可以自己上网查几件事；`0` 关闭 |
 | `researchMaxChars` | `200` | "你最近自己查过这些"那一块的预算；`0` 关闭 |
 | `nowMaxChars` | `120` | "此刻你在做什么"那一行的预算；`0` 关闭 |
+| `temporaryFactDays` | `14` | 临时事实在记忆里保留多少天；`0` = 不淡出 |
+| `recallMaxChars` | `600` | 一次记忆检索回答的预算 |
 | `chooseOwnJob` | `true` | 职业由她在第一次见面时自己挑，而不是继承种子的默认值；`false` 时直接用种子给的那个 |
 
 > 要"只在名为 `xiao` 的 preset 里出现"，设 `enabledForPresets: ["xiao"]`。
@@ -66,7 +68,8 @@ dsh --profile <name> ...   # 具体以 plugin_manager 返回为准
 | 工具 | 作用 | 硬约束 |
 |---|---|---|
 | `xiao_state` | 读角色卡、性格、近期事件；`includeFacts` 读原始日志，`asOfSeq` 读历史状态 | 只读 |
-| `xiao_update` | `set_job` / `remember` / `forget` / `set_age` | 见下 |
+| `xiao_recall` | 检索记忆：`query` 找关键词，`expand: id` 取某条全文 | 只读；查不到就是查不到 |
+| `xiao_update` | `set_job` / `move` / `place` / `remember` / `dispute` / `forget` / `set_age` | 见下 |
 | `xiao_reset` | 清空这个实例并重新投胎：全部事实、版本历史、记住的用户事实、首次见面标记 | 必须带 `confirm: "reset"`；**不可逆** |
 | `xiao_life` | 读最近 N 天（1–60）的模拟生活；`speak: [id]` 把说过的事件固化 | 返回体一律带 `simulated: true` |
 | `xiao_export` | 导出 JSONL 事实流 | 只读，不写盘 |
@@ -80,6 +83,8 @@ dsh --profile <name> ...   # 具体以 plugin_manager 返回为准
 `remember` 写进去的事会以「关于对方，你记得这些」单独注入（见 §4 的 `userSummaryMaxChars`），`forget` 之后立刻消失。`set_age` 是一次**新的起点**，不是冻结：更正之后仍按 `growthPerMonth` 继续长。
 
 `move` 只改**现居城市**（`override {field: "city"}`），既不改出生地，也不改人生大事记——大事记是冻结的过去。`place` 追加一个她熟悉的地点（`override {field: "nearby"}`），多次调用是追加而不是覆盖。
+
+`dispute` 是"存疑"而不是删除：那条事实留在日志里可审计，但**不再进入提示词**，她也不会拿它当已知的事。`remember` 带 `temporary: true` 的事实会在 `temporaryFactDays` 天后淡出记忆（同样留在日志里）。
 
 **她第一次定职业不受状态机约束**：`jobChosen: false` 时 `set_job` 可以选任意分类，因为那是在决定"我是谁"，不是在换工作。一旦写下第一条 job 事实，后续所有变更都必须走状态机（employed 不能直接回到 employed，退休必须 55 岁以上）。
 

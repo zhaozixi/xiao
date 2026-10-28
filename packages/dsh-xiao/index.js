@@ -37,6 +37,8 @@ import {
   localDay,
   slotLabel,
   timeLabel,
+  searchMemory,
+  expandMemory,
 } from './persona.js';
 
 const DEFAULTS = {
@@ -65,6 +67,10 @@ const DEFAULTS = {
    * seed's guess. Until she does, the card says she has not decided yet.
    */
   chooseOwnJob: true,
+  /** How long a temporary user fact stays in her memory before it fades. 0 = never fade. */
+  temporaryFactDays: 14,
+  /** Character budget for one memory-recall answer. */
+  recallMaxChars: 600,
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -96,6 +102,8 @@ function normalizeConfig(config) {
     if (Number.isFinite(config.researchMaxChars)) cfg.researchMaxChars = Math.max(0, Math.floor(config.researchMaxChars));
     if (Number.isFinite(config.nowMaxChars)) cfg.nowMaxChars = Math.max(0, Math.floor(config.nowMaxChars));
     if (typeof config.chooseOwnJob === 'boolean') cfg.chooseOwnJob = config.chooseOwnJob;
+    if (Number.isFinite(config.temporaryFactDays)) cfg.temporaryFactDays = Math.max(0, Math.floor(config.temporaryFactDays));
+    if (Number.isFinite(config.recallMaxChars)) cfg.recallMaxChars = Math.max(0, Math.floor(config.recallMaxChars));
   }
   return cfg;
 }
@@ -119,6 +127,11 @@ function factKey(seq) {
 export function apply(ctx, config) {
   const cfg = normalizeConfig(config);
   const state = { domain: undefined, view: null, ready: false, failure: undefined };
+  /**
+   * What each prompt block actually costs, so "budget" is a measured number rather than a
+   * promise. Updated on every assembly; read by `xiao_state`.
+   */
+  const stats = { blocks: { persona: 0, user: 0, research: 0, now: 0 }, injections: 0, recalls: 0, researchCalls: 0 };
   const sessions = new Map();
   const pageHits = { total: 0, page: 0 };
   // 'missing' until the feed route registers, then 'ok'. Surfaced by `xiao_state` so a
@@ -308,6 +321,7 @@ export function apply(ctx, config) {
         if ([...notes.entries()].some(([, note]) => note.day === today && note.query === query)) return;
         const result = await web.search({ query, maxResults: 5 });
         const summary = summarizeSearch(result);
+        stats.researchCalls += 1;
         await flags.put('research', { day: today, used: used + 1 });
         if (!summary) return;
         const now = Date.now();
@@ -513,10 +527,16 @@ export function apply(ctx, config) {
     name: 'xiao.persona',
     order: 900,
     text: (assembleContext) => {
-      if (!allowsInjection(assembleContext)) return '';
+      if (!allowsInjection(assembleContext)) {
+        stats.blocks.persona = 0;
+        return '';
+      }
       const sessionId = assembleContext?.scope?.id;
       const card = renderCard(state.view, cfg);
-      if (!card) return '';
+      if (!card) {
+        stats.blocks.persona = 0;
+        return '';
+      }
       const extras = [];
       if (sessionId && introPending.has(sessionId) && !hasIntroduced()) {
         introPending.delete(sessionId);
@@ -526,7 +546,10 @@ export function apply(ctx, config) {
       // Until she decides what she does, every turn carries the nudge — it disappears the
       // moment a job fact exists, so it can never nag her twice.
       if (cfg.chooseOwnJob && state.view && state.view.jobChosen === false) extras.push(JOB_CHOICE_HINT);
-      return extras.length > 0 ? `${card}\n\n${extras.join('\n')}` : card;
+      const text = extras.length > 0 ? `${card}\n\n${extras.join('\n')}` : card;
+      stats.blocks.persona = text.length;
+      stats.injections += 1;
+      return text;
     },
   });
 
@@ -535,7 +558,11 @@ export function apply(ctx, config) {
   ctx.systemPrompt.context({
     name: 'xiao.user',
     order: 901,
-    text: (assembleContext) => (allowsInjection(assembleContext) ? renderUserNotes(state.view, cfg) : ''),
+    text: (assembleContext) => {
+      const text = allowsInjection(assembleContext) ? renderUserNotes(state.view, cfg) : '';
+      stats.blocks.user = text.length;
+      return text;
+    },
   });
 
   // What she looked up on her own time: also its own budget, and never framed as a fact
@@ -543,7 +570,11 @@ export function apply(ctx, config) {
   ctx.systemPrompt.context({
     name: 'xiao.research',
     order: 902,
-    text: (assembleContext) => (allowsInjection(assembleContext) ? renderResearch(researchNotes(), cfg) : ''),
+    text: (assembleContext) => {
+      const text = allowsInjection(assembleContext) ? renderResearch(researchNotes(), cfg) : '';
+      stats.blocks.research = text.length;
+      return text;
+    },
   });
 
   // What she is doing at this hour. Changes through the day, so two conversations in one
@@ -551,8 +582,22 @@ export function apply(ctx, config) {
   ctx.systemPrompt.context({
     name: 'xiao.now',
     order: 903,
-    text: (assembleContext) =>
-      allowsInjection(assembleContext) ? renderNow(currentMoment(state.view, Date.now()), cfg) : '',
+    text: (assembleContext) => {
+      const text = allowsInjection(assembleContext) ? renderNow(currentMoment(state.view, Date.now()), cfg) : '';
+      stats.blocks.now = text.length;
+      return text;
+    },
+  });
+
+  // The I_dir layer: the prompt only says the index exists. The entries themselves are
+  // pulled on demand by `xiao_recall`, so the block stays a constant one line.
+  ctx.systemPrompt.context({
+    name: 'xiao.recall',
+    order: 904,
+    text: (assembleContext) => {
+      if (!allowsInjection(assembleContext) || !(state.view?.factCount > 1)) return '';
+      return '想不起具体细节时，用 xiao_recall 查（对方说过的事、你自己的经历、你查过的资料）；查不到就说记不清，不要编。';
+    },
   });
 
   ctx.tools.register({
@@ -588,7 +633,7 @@ export function apply(ctx, config) {
         for (const id of speak) {
           const event = preview.events.find((candidate) => candidate.id === id);
           if (!event || event.committed) continue;
-          await writeFact('event', { id: event.id, day: event.day, kind: event.kind, text: event.text }, 'sim', 'confirmed');
+          await writeFact('event', { id: event.id, day: event.day, kind: event.kind, text: event.text, spoken: true }, 'sim', 'confirmed');
           frozen.push(id);
         }
         if (frozen.length > 0) view = refresh() ?? view;
@@ -636,7 +681,7 @@ export function apply(ctx, config) {
       properties: {
         action: {
           type: 'string',
-          enum: ['set_job', 'move', 'place', 'remember', 'forget', 'set_age'],
+          enum: ['set_job', 'move', 'place', 'remember', 'dispute', 'forget', 'set_age'],
           description: 'Which mutation to apply.',
         },
         job: { type: 'string', description: 'For set_job: the job label, e.g. 在书店做店员.' },
@@ -647,6 +692,11 @@ export function apply(ctx, config) {
         },
         city: { type: 'string', description: 'For move: the city she now lives in, at most 20 characters.' },
         text: { type: 'string', description: 'For remember: the fact the user stated. For place: one familiar spot, e.g. 街角的旧书店.' },
+        temporary: {
+          type: 'boolean',
+          description: 'For remember: true when the fact is about a passing situation (a trip, a busy week) rather than a lasting trait; temporary facts fade after a while.',
+        },
+        reason: { type: 'string', description: 'For dispute: why the fact is in doubt, e.g. 用户说没这回事.' },
         seq: { type: 'number', description: 'For forget: the seq of the fact to tombstone.' },
         age: { type: 'number', description: 'For set_age: the new age, an integer inside the configured range.' },
         confirmed: { type: 'boolean', description: 'For set_age: true only after the user explicitly confirmed the change.' },
@@ -762,6 +812,9 @@ export function apply(ctx, config) {
         lifeHistory: view.lifeHistory,
         places: { home: view.home, work: view.work, commute: view.commute, nearby: view.nearby },
         research: researchNotes().slice(-3),
+        disputed: view.disputed,
+        expiredNotes: view.expiredNotes,
+        stats: { ...stats, blocks: { ...stats.blocks } },
         webAvailable: Boolean(ctx.get('web') && typeof ctx.get('web').search === 'function'),
         traits: {
           outlook: view.outlook,
@@ -779,6 +832,74 @@ export function apply(ctx, config) {
       };
       if (input.includeFacts) payload.facts = scoped.sort(compareSeq);
       return payload;
+    },
+  });
+
+  /**
+   * The I_idx layer: look something up instead of dumping the whole state. Short hits by
+   * default; `expand` fetches one hit's full text only when the summary is not enough.
+   */
+  const memorySources = () => ({
+    facts: state.domain ? [...state.domain.table('facts').entries()].map(([, record]) => record) : [],
+    notes: researchNotes(),
+    events: Array.isArray(state.view?.eventsAll) ? state.view.eventsAll : [],
+  });
+
+  ctx.tools.register({
+    name: 'xiao_recall',
+    description:
+      "Search what Xiao could remember - things the user said, her own history, what she looked up - without dumping the whole state. Returns at most a few short hits with ids; call again with expand:<id> only when a summary is not enough. Use it before saying she does not remember something, and never invent a memory that the results do not contain.",
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Keywords to look for. Empty returns the most recent memories.' },
+        expand: { type: 'string', description: 'A hit id from an earlier call, e.g. fact:1793167933479001; returns its full text.' },
+        limit: { type: 'number', description: 'How many hits to return, 1-8 (default 3).' },
+      },
+      additionalProperties: false,
+    },
+    output: {
+      schema: { type: 'object', additionalProperties: true },
+      render: (args, value) => [{ type: 'text', text: '```json\n' + JSON.stringify(value, null, 2) + '\n```' }],
+    },
+    async execute(args) {
+      if (!state.ready) return { ready: false, reason: state.failure ?? 'still opening storage' };
+      const input = isPlainObject(args) ? args : {};
+      const sources = memorySources();
+      stats.recalls += 1;
+
+      if (typeof input.expand === 'string' && input.expand.length > 0) {
+        const text = expandMemory(sources, input.expand);
+        return text === undefined
+          ? { expanded: input.expand, found: false, reason: '没有这条记忆' }
+          : { expanded: input.expand, found: true, text };
+      }
+
+      const result = searchMemory({
+        ...sources,
+        query: String(input.query ?? ''),
+        limit: Number.isFinite(input.limit) ? input.limit : 3,
+      });
+
+      // Budget the answer, not the search: a long list is exactly what this tool exists to
+      // avoid. Truncation is reported so the caller knows to narrow the query.
+      const hits = [];
+      let used = 0;
+      for (const hit of result.hits) {
+        const cost = hit.summary.length + 24;
+        if (used + cost > cfg.recallMaxChars && hits.length > 0) break;
+        hits.push(hit);
+        used += cost;
+      }
+
+      return {
+        query: result.query,
+        total: result.total,
+        returned: hits.length,
+        truncated: hits.length < result.hits.length,
+        hits,
+        hint: 'expand:<id> 取全文；查不到就说记不清',
+      };
     },
   });
 
@@ -816,6 +937,9 @@ export function apply(ctx, config) {
       lifeHistory: view.lifeHistory,
       places: { home: view.home, work: view.work, commute: view.commute, nearby: view.nearby },
       research: researchNotes().slice(-3),
+      disputed: view.disputed,
+      expiredNotes: view.expiredNotes,
+      stats: { ...stats, blocks: { ...stats.blocks } },
       traits: {
         outlook: view.outlook,
         curiosity: view.curiosity,

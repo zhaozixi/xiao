@@ -10,7 +10,7 @@
 /** Storage unit names must match /^[a-z][a-z0-9_]*$/ — no hyphens. */
 export const DOMAIN_NAME = 'dsh_xiao';
 export const RULES_VERSION = 1;
-export const FACT_KINDS = ['birth', 'override', 'job', 'health', 'user_fact', 'event', 'tombstone', 'rejected'];
+export const FACT_KINDS = ['birth', 'override', 'job', 'health', 'user_fact', 'event', 'tombstone', 'rejected', 'dispute'];
 
 const AGE_MIN = 18;
 const AGE_MAX = 60;
@@ -457,7 +457,28 @@ export function planUpdate(input, view, records = []) {
     const text = typeof args.text === 'string' ? args.text.trim() : '';
     if (text.length === 0) return { ok: false, code: 'missing_text', reason: 'text 不能为空' };
     if (text.length > 200) return { ok: false, code: 'text_too_long', reason: 'text 超过 200 字' };
-    return { ok: true, kind: 'user_fact', data: { text }, source: 'user' };
+    // Temporary facts (a trip, a mood, a busy week) should fade instead of becoming
+    // permanent traits of the user.
+    const data = args.temporary === true ? { text, temporary: true } : { text };
+    return { ok: true, kind: 'user_fact', data, source: 'user' };
+  }
+
+  if (action === 'dispute') {
+    const seq = Number(args.seq);
+    if (!Number.isFinite(seq)) return { ok: false, code: 'missing_seq', reason: 'seq 必须是数字' };
+    const all = [...records].filter(isFactRecord);
+    const target = all.find((fact) => fact.seq === seq);
+    if (!target) return { ok: false, code: 'unknown_fact', reason: `没有 seq=${seq} 的事实` };
+    if (target.kind === 'birth' || target.kind === 'dispute') {
+      return { ok: false, code: 'cannot_dispute', reason: '这条事实不能被标记为存疑' };
+    }
+    if (all.some((fact) => fact.kind === 'tombstone' && fact.data.targetSeq === seq)) {
+      return { ok: false, code: 'already_forgotten', reason: `seq=${seq} 已被删除` };
+    }
+    if (all.some((fact) => fact.kind === 'dispute' && Number(fact.data.targetSeq) === seq)) {
+      return { ok: false, code: 'already_disputed', reason: `seq=${seq} 已被标记为存疑` };
+    }
+    return { ok: true, kind: 'dispute', data: { targetSeq: seq, reason: String(args.reason ?? '') }, source: 'user' };
   }
 
   if (action === 'forget') {
@@ -501,7 +522,7 @@ export function planUpdate(input, view, records = []) {
     return { ok: true, kind: 'override', data: { field: 'age', value: age }, source: 'user' };
   }
 
-  return { ok: false, code: 'unknown_action', reason: `未知 action：${action || '(空)'}；可选 set_job / move / place / remember / forget / set_age` };
+  return { ok: false, code: 'unknown_action', reason: `未知 action：${action || '(空)'}；可选 set_job / move / place / remember / dispute / forget / set_age` };
 }
 
 /**
@@ -593,6 +614,110 @@ export function suggestTransition(view, events) {
         hint: '如果对话里聊到这件事，可以用 xiao_update 的 set_job 把职业改成 job_seeking。',
       };
     }
+  }
+  return undefined;
+}
+
+/**
+ * One line describing a fact, for the memory index. Returns '' for facts that should not
+ * be searchable (birth is a root, disputes and rejections are bookkeeping).
+ * @param {object} fact - a stored fact.
+ * @returns {string} a short description.
+ */
+function describeFact(fact) {
+  const data = fact?.data ?? {};
+  switch (fact?.kind) {
+    case 'job':
+      return `职业：${data.job}`;
+    case 'override':
+      if (data.field === 'city') return `搬到${data.value}`;
+      if (data.field === 'age') return `年龄更正为 ${data.value} 岁`;
+      if (data.field === 'nearby') return `熟悉的地点：${data.value}`;
+      return `设定：${data.field} = ${data.value}`;
+    case 'user_fact':
+    case 'health':
+    case 'event':
+      return String(data.text ?? '');
+    default:
+      return '';
+  }
+}
+
+/**
+ * Search what she could remember, without injecting it. This is the I_idx layer: the
+ * prompt only tells her that recall exists; the entries live out here and are pulled on
+ * demand.
+ * @param {{facts?: object[], notes?: object[], events?: object[], query?: string, limit?: number}} input - sources and query.
+ * @returns {{query: string, total: number, hits: object[]}} ranked hits, summaries only.
+ */
+export function searchMemory({ facts = [], notes = [], events = [], query = '', limit = 3 } = {}) {
+  const needle = String(query ?? '').trim();
+  const tokens = needle
+    .toLowerCase()
+    .split(/[\s,，。；;、]+/)
+    .filter((token) => token.length > 0);
+  const bounded = clamp(Math.floor(Number(limit) || 3), 1, 8);
+
+  const records = [];
+  for (const fact of Array.isArray(facts) ? facts : []) {
+    const text = describeFact(fact);
+    if (text) records.push({ id: `fact:${fact.seq}`, source: 'fact', kind: String(fact.kind), at: Number(fact.at) || 0, text });
+  }
+  for (const note of Array.isArray(notes) ? notes : []) {
+    const text = [note?.query, note?.summary].filter(Boolean).join(' → ');
+    if (text) records.push({ id: `note:${note.at}`, source: 'note', kind: 'research', at: Number(note.at) || 0, text });
+  }
+  for (const event of Array.isArray(events) ? events : []) {
+    const text = String(event?.text ?? '');
+    if (text) {
+      records.push({ id: `event:${event.id}`, source: 'event', kind: String(event.kind ?? 'rest'), at: Number(event.at) || 0, text });
+    }
+  }
+
+  const scored = records.map((record) => {
+    const haystack = record.text.toLowerCase();
+    const score = tokens.length === 0 ? 0 : tokens.filter((token) => haystack.includes(token)).length;
+    return { record, score };
+  });
+  const matched = tokens.length === 0 ? scored : scored.filter((entry) => entry.score > 0);
+  matched.sort((a, b) => b.score - a.score || b.record.at - a.record.at);
+
+  return {
+    query: needle,
+    total: matched.length,
+    hits: matched.slice(0, bounded).map(({ record }) => ({
+      id: record.id,
+      source: record.source,
+      kind: record.kind,
+      at: record.at,
+      summary: record.text.length > 60 ? `${record.text.slice(0, 60)}…` : record.text,
+    })),
+  };
+}
+
+/**
+ * The full text behind a hit from {@link searchMemory}. This is the L2 expansion: only
+ * called when the summary is not enough.
+ * @param {{facts?: object[], notes?: object[], events?: object[]}} sources - the same sources.
+ * @param {string} id - the hit id, e.g. `fact:123` or `event:12.0`.
+ * @returns {string|undefined} the full text.
+ */
+export function expandMemory(sources, id) {
+  const key = String(id ?? '');
+  const [scope, ...rest] = key.split(':');
+  const value = rest.join(':');
+  if (scope === 'fact') {
+    const fact = (sources.facts ?? []).find((candidate) => String(candidate.seq) === value);
+    return fact ? describeFact(fact) || undefined : undefined;
+  }
+  if (scope === 'note') {
+    const note = (sources.notes ?? []).find((candidate) => String(candidate.at) === value);
+    if (!note) return undefined;
+    return [note.query, note.summary].filter(Boolean).join('\n');
+  }
+  if (scope === 'event') {
+    const event = (sources.events ?? []).find((candidate) => String(candidate.id) === value);
+    return event?.text ? String(event.text) : undefined;
   }
   return undefined;
 }
@@ -1188,13 +1313,21 @@ export function fold(records, cfg, now) {
   const nearbyAdditions = [];
   const notes = [];
   const events = [];
+  const disputed = new Map();
   let job = base.job;
   let jobCategory = base.jobCategory;
   let jobChosen = false;
   let ageCorrection;
 
   for (const fact of facts) {
-    if (fact.kind === 'override') {
+    if (fact.kind === 'dispute') {
+      // A dispute is not a deletion: the fact stays in the log for audit, it just stops
+      // being treated as something she knows.
+      const target = Number(fact.data.targetSeq);
+      if (Number.isFinite(target)) {
+        disputed.set(target, { seq: target, at: fact.at, reason: String(fact.data.reason ?? '') });
+      }
+    } else if (fact.kind === 'override') {
       overrides.set(fact.data.field, fact.data.value);
       if (fact.data.field === 'age' && Number.isFinite(Number(fact.data.value))) {
         // A correction is a new starting point, not a permanent freeze: aging continues
@@ -1214,16 +1347,31 @@ export function fold(records, cfg, now) {
       jobChosen = true;
     } else if (fact.kind === 'event') {
       events.push({
+        seq: fact.seq,
         id: String(fact.data.id ?? ''),
         day: Number(fact.data.day ?? 0),
         kind: String(fact.data.kind ?? 'rest'),
         at: fact.at,
         text: String(fact.data.text ?? ''),
+        spoken: fact.data.spoken === true,
       });
     } else if (fact.kind === 'user_fact' || fact.kind === 'health') {
-      notes.push(String(fact.data.text ?? ''));
+      notes.push({
+        seq: fact.seq,
+        at: fact.at,
+        text: String(fact.data.text ?? ''),
+        temporary: fact.data.temporary === true,
+      });
     }
   }
+
+  // Disputed facts and expired temporary facts stay in the log but leave her memory.
+  const temporaryDays = clamp(Math.floor(Number(cfg?.temporaryFactDays ?? 14)), 0, 365);
+  const isExpired = (note) => note.temporary && temporaryDays > 0 && now - note.at > temporaryDays * DAY_MS;
+  const visibleNotes = notes.filter((note) => !disputed.has(note.seq) && !isExpired(note)).map((note) => note.text);
+  const keptEvents = events.filter((event) => !disputed.has(event.seq));
+  const disputedList = [...disputed.values()].sort((a, b) => a.at - b.at);
+  const expiredNotes = notes.filter(isExpired).length;
 
   // With the feature switched off, the seed's job counts as decided: no "undecided" leaks.
   if (cfg?.chooseOwnJob === false) jobChosen = true;
@@ -1285,10 +1433,17 @@ export function fold(records, cfg, now) {
     speech: base.speech,
     hobby: base.hobby,
     quirk: base.quirk,
-    notes,
-    eventsAll: [...events].sort((a, b) => b.at - a.at),
-    recent: [...events].sort((a, b) => b.at - a.at).slice(0, 3).map((event) => event.text),
-    tone: toneOf(events),
+    notes: visibleNotes,
+    eventsAll: [...keptEvents].sort((a, b) => b.at - a.at),
+    // News first: something she has not told the user yet is more interesting than the
+    // same event she already mentioned.
+    recent: [...keptEvents]
+      .sort((a, b) => Number(a.spoken) - Number(b.spoken) || b.at - a.at)
+      .slice(0, 3)
+      .map((event) => event.text),
+    disputed: disputedList,
+    expiredNotes,
+    tone: toneOf(keptEvents),
     factCount: facts.length,
   };
 }

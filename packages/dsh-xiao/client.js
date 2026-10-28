@@ -70,6 +70,10 @@ window.__ModuleLoader__.load({
         places: '住处与路线',
         research: '最近自己查的事',
         researchEmpty: '还没有查过什么。',
+        memory: '记忆',
+        disputedLabel: '存疑',
+        expiredLabel: '已淡出',
+        blocksLabel: '本次注入',
         relations: '身边的人',
         interests: '兴趣',
         nowTitle: '此刻',
@@ -163,6 +167,10 @@ window.__ModuleLoader__.load({
         places: 'Home and route',
         research: 'Looked up on her own',
         researchEmpty: 'Nothing looked up yet.',
+        memory: 'Memory',
+        disputedLabel: 'In doubt',
+        expiredLabel: 'Faded',
+        blocksLabel: 'Injected',
         relations: 'People around her',
         interests: 'Interests',
         nowTitle: 'Right now',
@@ -939,6 +947,16 @@ window.__ModuleLoader__.load({
                 ),
             )
           : h('div', { key: 'research-empty', style: { color: C.dim, fontSize: 13 } }, dict.researchEmpty),
+        heading('h-memory', dict.memory),
+        row('disputed', dict.disputedLabel, String(Array.isArray(value.disputed) ? value.disputed.length : 0)),
+        row('expired', dict.expiredLabel, String(value.expiredNotes ?? 0)),
+        row(
+          'blocks',
+          dict.blocksLabel,
+          value.stats?.blocks
+            ? `${value.stats.blocks.persona ?? 0} / ${value.stats.blocks.user ?? 0} / ${value.stats.blocks.research ?? 0} / ${value.stats.blocks.now ?? 0} 字`
+            : '—',
+        ),
         heading('h-traits', dict.traits),
         row('outlook', dict.fields.outlook, traits.outlook ?? '—'),
         row('curiosity', dict.fields.curiosity, traits.curiosity ?? '—'),

@@ -2,7 +2,7 @@
 
 > 一个 DSH 插件：把「一个人」放进聊天里，并且让她经得起追问。
 >
-> 版本：v1.17（2026-10-28）　代码：`packages/dsh-xiao`　测试：118 条
+> 版本：v1.18（2026-10-28）　代码：`packages/dsh-xiao`　测试：129 条
 
 ---
 
@@ -110,14 +110,14 @@ export const inject = ['storageDomain', 'systemPrompt', 'tools', 'connection'];
 {
   seq: 1793167933479001,      // 严格递增的整数，见 3.4
   at: 1793167933479,          // 墙钟毫秒，仅用于排序/展示，不参与因果
-  kind: 'job',                // 八种之一
+  kind: 'job',                // 九种之一
   data: { job: '在书店做店员', category: 'employed' },
   source: 'model',            // seed | user | model | sim | guard
   evidence: 'confirmed'       // confirmed | inferred
 }
 ```
 
-八种 `kind`：
+九种 `kind`：
 
 | kind | 写入者 | 作用 | 可被遗忘 |
 |---|---|---|---|
@@ -128,6 +128,7 @@ export const inject = ['storageDomain', 'systemPrompt', 'tools', 'connection'];
 | `health` | 模型 | 同上（保留的分类） | ✅ |
 | `event` | 宿主（固化） | 已冻结的一个生活事件 | ✅ |
 | `tombstone` | 模型 | 指向某条事实的删除标记 | ❌ |
+| `dispute` | 模型 | 标记某条事实"存疑"：不删除，但不再当成已知事实 | ❌ |
 | `rejected` | 守卫 / 工具 | 被拒绝的写入尝试（用于证明守卫有效） | ✅ |
 
 ### 3.3 fold：从日志到视图
@@ -292,7 +293,28 @@ deriveWork(seed, city, job, category) → { work | null, commute }
 
 **固化（pinning）**：已经过去的日子在打开会话时自动固化，明天之后它们就是事实。不这么做的后果是：换一次职业，上周发生的事会被重新生成一遍——那等于改写历史。
 
-### 4.8 后台调研（research）
+### 4.8 记忆检索（recall）
+
+这是 v6.3「H/I/C + 触发指针 + 渐进展开」在插件里的落地形态。她没有把整段日志塞进提示词，而是把日志留在外面，需要时再取。
+
+```
+提示词里只有一行（I_dir，常量大小）：
+  「想不起具体细节时，用 xiao_recall 查；查不到就说记不清，不要编。」
+
+xiao_recall(query)   → 在 事实 / 笔记 / 生活事件 里做关键词匹配
+                     → 返回 ≤3 条 {id, source, kind, at, summary(≤60 字)}
+                     → 总字数受 recallMaxChars（默认 600）约束
+xiao_recall(expand)  → 按 id 取该条全文（L2）
+```
+
+**为什么这样设计**：
+
+- **目录（I_dir）必须存在**，否则模型不知道自己能查，工具永远不会被调用。它只有一句话，成本恒定。
+- **摘要（L1）必须短**：「他养了一只橘猫，叫年糕」够了就不展开；不够再 `expand`。
+- **匹配用词面**，不做向量：中文短语通常包含实体词；这比引入嵌入检索便宜一个数量级，也不是本次要验证的东西。
+- **查不到要承认**：返回空就是空，提示词明确要求"说记不清，不要编"。
+
+### 4.9 后台调研（research）
 
 - **触发**：每轮对话结束（`agent/turn-stopping`），fire-and-forget
 - **配额**：`researchPerDay`（默认 2），用 `flags.research = {day, used}` 计数（本地日）
@@ -301,7 +323,7 @@ deriveWork(seed, city, job, category) → { work | null, commute }
 - **存什么**：`notes` 表，压缩到 200 字，最多留 30 条
 - **怎么用**：独立上下文「你最近自己查过这些」，**她不会主动提**
 
-### 4.9 人设卡（renderCard）
+### 4.10 人设卡（renderCard）
 
 固定结构，前三行稳定（可缓存），后面逐行可选：
 
@@ -338,7 +360,8 @@ writeFact(kind, data, source, evidence)
 | `set_job` | `job`, `category` | 换工作 | 走状态机；**首次选择不受限** |
 | `move` | `city` | 搬到另一个城市 | 只改现居，不改出生地/大事记 |
 | `place` | `text` | 她自己补充一个熟悉的地点 | 追加并去重，上限 12 |
-| `remember` | `text` | 记住用户说的事 | 只记用户说过的 |
+| `remember` | `text`, `temporary?` | 记住用户说的事 | 只记用户说过的；`temporary` 的事会淡出 |
+| `dispute` | `seq`, `reason?` | 标记某条事实存疑 | 不删除；之后的注入里不再出现 |
 | `forget` | `seq` | 删除一条事实 | 不能删出生事实 |
 | `set_age` | `age`, `confirmed` | 更正年龄 | 必须 `confirmed: true` |
 
@@ -379,6 +402,7 @@ retired     → （终止）
 | `xiao.user` | 901 | 「关于对方，你记得这些」 | `userSummaryMaxChars` | 设 0 |
 | `xiao.research` | 902 | 「你最近自己查过这些」 | `researchMaxChars` | 设 0 |
 | `xiao.now` | 903 | 「此刻是下午，你在开会」 | `nowMaxChars` | 设 0 |
+| `xiao.recall` | 904 | 一行提示：可以查记忆 | 常量（约 60 字） | 事实少于 2 条时不注入 |
 
 **准入控制**（`allowsInjection`）：
 
@@ -398,6 +422,7 @@ retired     → （终止）
 | 工具 | 作用 | 关键约束 |
 |---|---|---|
 | `xiao_state` | 读她的完整状态 | 只读；`asOfSeq` 参数可读历史快照 |
+| `xiao_recall` | 检索记忆：事实 / 笔记 / 生活事件 | 只读；默认只回摘要，`expand` 取全文；查不到就是查不到 |
 | `xiao_life` | 读最近窗口的生活事件并固化说出口的事件 | 不改变职业；`speak` 里的 id 会永久固定 |
 | `xiao_update` | 改状态 | 见 §5.2 |
 | `xiao_reset` | 重置实例 | 需要字面量 `confirm: "reset"` |
@@ -459,6 +484,8 @@ retired     → （终止）
 | `researchMaxChars` | `200` | 调研块预算 |
 | `nowMaxChars` | `120` | 「此刻」一行预算 |
 | `chooseOwnJob` | `true` | 职业由她自己定；`false` 则用种子兜底值 |
+| `temporaryFactDays` | `14` | 临时事实在记忆里保留多少天；0 = 不淡出 |
+| `recallMaxChars` | `600` | 一次记忆检索回答的预算 |
 
 写错的键会在激活时打 warning，不会静默忽略。
 
@@ -476,6 +503,8 @@ retired     → （终止）
 | **I6** | 模拟事件带 `simulated: true` | 事件对象恒有该字段；卡片从不用它冒充真实 |
 | **I7** | 格式单调 | `SPEC.version` 只增不减；`facts` 记录形状未变 |
 | **I8** | 同一 `(seed, day)` 推导稳定 | 日计划、调研问题、人设都有确定性测试 |
+| **I9** | 存疑的事实绝不进入注入 | `fold` 过滤 disputed；`xiao_state.disputed` 可见（`memory.test.mjs`） |
+| **I10** | 检索只返回日志里有的东西 | `searchMemory` 只读事实/笔记/事件，空结果就是空；提示词要求"查不到就说记不清" |
 
 ---
 
@@ -507,7 +536,7 @@ retired     → （终止）
 
 ## 14. 测试与评估
 
-**118 条单测**，14 个文件：
+**129 条单测**，15 个文件：
 
 | 文件 | 覆盖 |
 |---|---|
@@ -524,6 +553,7 @@ retired     → （终止）
 | `catalog.test.mjs` | 所有池子结构完整（防止改漏某时段） |
 | `consistency.test.mjs` | 未定职业不泄漏、配置关闭时状态自洽、追赶窗口 |
 | `purity.test.mjs` | fold 不修改输入、乱序等价、时钟回拨 |
+| `memory.test.mjs` | 检索命中与扩展、存疑不进记忆、临时事实淡出、说过的排在后面 |
 
 **评估脚本** `bench/report.mjs`（19 条断言）：同种子复现（200 个种子）、稳定性 vs 合法演化、成本近似。
 
