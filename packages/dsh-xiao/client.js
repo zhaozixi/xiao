@@ -59,7 +59,10 @@ window.__ModuleLoader__.load({
           speech: '说话',
           hobby: '闲时',
           quirk: '小毛病',
+          birthDate: '出生日期',
+          birthCity: '出生地',
         },
+        relations: '身边的人',
         kinds: {
           birth: '出生',
           override: '更正',
@@ -137,7 +140,10 @@ window.__ModuleLoader__.load({
           speech: 'Speech',
           hobby: 'Spare time',
           quirk: 'Quirk',
+          birthDate: 'Born on',
+          birthCity: 'Birthplace',
         },
+        relations: 'People around her',
         kinds: {
           birth: 'birth',
           override: 'correction',
@@ -790,9 +796,24 @@ window.__ModuleLoader__.load({
         heading('h-identity', dict.identity),
         row('gender', dict.fields.gender, identity.gender ?? '—'),
         row('age', dict.fields.age, String(identity.age ?? '—')),
+        row('birthDate', dict.fields.birthDate, identity.birthDate ?? '—'),
+        row('birthCity', dict.fields.birthCity, identity.birthCity ?? '—'),
         row('job', dict.fields.job, identity.job ?? '—'),
         row('tone', dict.fields.tone, value.tone ?? '—'),
-        Number.isFinite(value.bornAt) ? row('born', dict.born, dayTitle(value.bornAt, lang)) : null,
+        heading('h-relations', dict.relations),
+        Array.isArray(value.relations) && value.relations.length > 0
+          ? h(
+              'ul',
+              { key: 'relations', style: { margin: '2px 0 0', paddingLeft: 18, fontSize: 13, lineHeight: 1.75, color: C.text } },
+              value.relations.map((relation) =>
+                h(
+                  'li',
+                  { key: relation.id ?? relation.name },
+                  `${relation.name}（${relation.role}）${relation.detail ? ` — ${relation.detail}` : ''}`,
+                ),
+              ),
+            )
+          : h('div', { key: 'relations-empty', style: { color: C.dim, fontSize: 13 } }, '—'),
         heading('h-traits', dict.traits),
         row('outlook', dict.fields.outlook, traits.outlook ?? '—'),
         row('curiosity', dict.fields.curiosity, traits.curiosity ?? '—'),

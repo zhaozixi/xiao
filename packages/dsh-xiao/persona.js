@@ -89,6 +89,63 @@ const JOBS_LATE = [
   { job: '在做行政，快退休了', category: 'employed' },
 ];
 
+/** Place of birth: one city, deterministic from the seed. */
+const BIRTH_CITIES = [
+  '杭州', '成都', '长沙', '哈尔滨', '昆明', '青岛', '西安', '厦门',
+  '苏州', '重庆', '郑州', '合肥', '福州', '大连', '无锡', '南昌',
+];
+
+const SURNAMES = ['张', '王', '李', '陈', '刘', '周', '吴', '徐', '孙', '马', '朱', '胡', '林', '何', '郭', '高'];
+const GIVEN = ['宁', '航', '婧', '磊', '楠', '婷', '阳', '帆', '悦', '鹏', '若', '嘉', '川', '岑', '沐', '岚'];
+
+const FAMILY_ROLES = ['母亲', '父亲', '姐姐', '哥哥', '妹妹', '弟弟'];
+const FAMILY_DETAIL = [
+  '在老家，每周通一次电话',
+  '同城，偶尔过来吃饭',
+  '在外地，逢年过节才见',
+  '总担心她的工作不稳定',
+];
+const FRIEND_ROLES = ['大学同学', '高中同学', '发小', '老邻居'];
+const FRIEND_DETAIL = ['常一起散步', '很久没联系了', '偶尔约着吃饭', '会互相吐槽工作'];
+const WORK_ROLES = ['同事', '前同事', '合作过的编辑', '常约稿的甲方'];
+const WORK_DETAIL = ['工作室的搭档', '偶尔一起接活', '上次合作之后就没再聊过'];
+const CLASS_ROLES = ['同班同学', '同宿舍的室友', '一起赶作业的朋友'];
+const CLASS_DETAIL = ['经常一起去图书馆', '这学期见面少了', '上次小组作业一起熬到很晚'];
+
+/**
+ * A tiny cast: one family member, one friend, and one person from school or work —
+ * enough for the character to have someone to mention, and small enough to stay honest.
+ * @param {Function} rnd - seeded generator, shared with the rest of the persona.
+ * @param {string} jobCategory - the category chosen at birth.
+ * @returns {object[]} relations.
+ */
+function deriveRelations(rnd, jobCategory) {
+  const used = new Set();
+  const nextName = () => {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const name = `${pick(rnd, SURNAMES)}${pick(rnd, GIVEN)}`;
+      if (!used.has(name)) {
+        used.add(name);
+        return name;
+      }
+    }
+    const fallback = `${pick(rnd, SURNAMES)}${pick(rnd, GIVEN)}${used.size}`;
+    used.add(fallback);
+    return fallback;
+  };
+
+  const relations = [
+    { id: 'family', kind: 'family', role: pick(rnd, FAMILY_ROLES), name: nextName(), detail: pick(rnd, FAMILY_DETAIL) },
+    { id: 'friend', kind: 'friend', role: pick(rnd, FRIEND_ROLES), name: nextName(), detail: pick(rnd, FRIEND_DETAIL) },
+  ];
+  if (jobCategory === 'student') {
+    relations.push({ id: 'classmate', kind: 'classmate', role: pick(rnd, CLASS_ROLES), name: nextName(), detail: pick(rnd, CLASS_DETAIL) });
+  } else {
+    relations.push({ id: 'work', kind: 'work', role: pick(rnd, WORK_ROLES), name: nextName(), detail: pick(rnd, WORK_DETAIL) });
+  }
+  return relations;
+}
+
 /**
  * Derive every identity field from a seed. Pure: same seed, same character.
  * @param {string} seed - instance seed.
@@ -116,6 +173,11 @@ export function derivePersona(seed) {
     speech,
     hobby,
     quirk,
+    // Appended after every pre-existing field so old seeds keep the same character.
+    birthMonth: 1 + Math.floor(rnd() * 12),
+    birthDay: 1 + Math.floor(rnd() * 28),
+    birthCity: pick(rnd, BIRTH_CITIES),
+    relations: deriveRelations(rnd, chosen.category),
   };
 }
 
@@ -244,22 +306,36 @@ export function renderCard(view, cfg) {
   const traits = `${view.outlook}；${view.curiosity}；${view.speech}。`;
   const flavor = `闲下来会${view.hobby}；${view.quirk}。现在${view.tone ?? '平静'}。`;
   const recent = view.recent && view.recent.length > 0 ? `最近：${view.recent[0]}。` : '';
+  const social = socialLine(view);
 
-  const lines = [head, traits];
-  const room = () => budget - head.length - traits.length - disclaimer.length - 2;
-  if (recent && recent.length <= room()) lines.push(recent);
-  if (flavor && flavor.length <= room()) lines.push(flavor);
+  // The disclaimer is the one line that must survive; everything else yields to it.
+  if (head.length + disclaimer.length + 1 > budget) return head.slice(0, budget);
+
+  const lines = [head];
+  let used = head.length;
+  const add = (text) => {
+    if (!text) return;
+    if (used + text.length + 1 + disclaimer.length + 1 > budget) return;
+    lines.push(text);
+    used += text.length + 1;
+  };
+  add(traits);
+  add(recent);
+  add(flavor);
+  add(social);
   lines.push(disclaimer);
+  return lines.join('\n');
+}
 
-  let card = lines.join('\n');
-  if (card.length > budget) {
-    const spare = Math.max(0, budget - head.length - disclaimer.length - 2);
-    const trimmed = traits.slice(0, spare);
-    card = spare > 0 ? `${head}\n${trimmed}\n${disclaimer}` : `${head}\n${disclaimer}`;
-  }
-  // Hard guarantee: the card never exceeds the budget, even when the budget cannot
-  // hold the head and the disclaimer together.
-  return card.length > budget ? card.slice(0, budget) : card;
+/** One short line about where she is from and who is around her. */
+function socialLine(view) {
+  const city = typeof view?.birthCity === 'string' ? view.birthCity : '';
+  const names = Array.isArray(view?.relations)
+    ? view.relations.map((relation) => relation?.name).filter((name) => typeof name === 'string' && name.length > 0)
+    : [];
+  if (!city && names.length === 0) return '';
+  if (names.length === 0) return `出生在${city}。`;
+  return `出生在${city}；身边有${names.join('、')}。`;
 }
 
 /**
@@ -601,6 +677,12 @@ export function fold(records, cfg, now) {
       )
     : aged;
 
+  // The birthday is anchored once (at birth, or at the moment of a correction) and then
+  // fixed: aging may run faster than a calendar, but the date she was born cannot move.
+  const anchorAt = ageCorrection ? ageCorrection.at : birthAt;
+  const anchorAge = ageCorrection ? ageCorrection.value : base.age;
+  const birthDate = birthDateString(anchorAt, anchorAge, base.birthMonth, base.birthDay);
+
   return {
     instanceId: birth.data.instanceId,
     seed: birth.data.seed,
@@ -609,6 +691,11 @@ export function fold(records, cfg, now) {
     gender: base.gender,
     genderWord: base.genderWord,
     age,
+    birthDate,
+    birthMonth: base.birthMonth,
+    birthDay: base.birthDay,
+    birthCity: base.birthCity,
+    relations: base.relations,
     job: overrides.has('job') ? String(overrides.get('job')) : job,
     jobCategory,
     outlook: base.outlook,
@@ -622,4 +709,20 @@ export function fold(records, cfg, now) {
     tone: toneOf(events),
     factCount: facts.length,
   };
+}
+
+/**
+ * Turn an anchor instant plus the age at that instant into the date she was born.
+ * @param {number} at - wall clock of the anchor.
+ * @param {number} age - her age at that anchor.
+ * @param {number} month - 1–12, from the seed.
+ * @param {number} day - 1–28, from the seed.
+ * @returns {string} `YYYY-MM-DD`.
+ */
+function birthDateString(at, age, month, day) {
+  const anchor = new Date(at);
+  let year = anchor.getFullYear() - Math.max(0, Math.floor(Number(age) || 0));
+  const candidate = new Date(year, month - 1, day);
+  if (candidate.getTime() > at) year -= 1;
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
