@@ -1495,7 +1495,7 @@ export function generateLife({ seed, view, cfg, days = 7, now = Date.now() }) {
 
   const committed = new Map();
   for (const event of view?.eventsAll ?? []) if (event.id) committed.set(event.id, event);
-  const deadIds = new Set(Array.isArray(view?.disputedEventIds) ? view.disputedEventIds : []);
+  const deadIds = new Set(Array.isArray(view?.deadEventIds) ? view.deadEventIds : []);
 
   const byId = new Map();
   for (let week = fromWeek; week <= toWeek; week += 1) {
@@ -1692,7 +1692,13 @@ export function fold(records, cfg, now) {
   const isExpired = (note) => note.temporary && temporaryDays > 0 && now - note.at > temporaryDays * DAY_MS;
   const visibleNotes = notes.filter((note) => !disputed.has(note.seq) && !isExpired(note)).map((note) => note.text);
   const keptEvents = events.filter((event) => !disputed.has(event.seq));
-  const disputedEventIds = new Set(events.filter((event) => disputed.has(event.seq)).map((event) => event.id));
+  // An event that was removed or disputed must never be generated again: the generator
+  // would otherwise walk the same week under the same id and quietly undo the decision.
+  const deadEventIds = new Set();
+  for (const fact of live) {
+    if (fact.kind === 'event' && dead.has(fact.seq)) deadEventIds.add(String(fact.data?.id ?? ''));
+  }
+  for (const event of events) if (disputed.has(event.seq)) deadEventIds.add(event.id);
   const disputedList = [...disputed.values()].sort((a, b) => a.at - b.at);
   const expiredNotes = notes.filter(isExpired).length;
 
@@ -1774,9 +1780,9 @@ export function fold(records, cfg, now) {
       .slice(0, 3)
       .map((event) => event.text),
     disputed: disputedList,
-    // Disputed events stay dead: the generator must not resurrect the same week under the
-    // same id and quietly undo the user's correction.
-    disputedEventIds: [...disputedEventIds],
+    // Removed or disputed events stay dead: the generator must not resurrect the same week
+    // under the same id and quietly undo the decision.
+    deadEventIds: [...deadEventIds],
     expiredNotes,
     tone: toneOf(keptEvents),
     factCount: facts.length,

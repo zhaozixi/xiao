@@ -266,10 +266,35 @@ test('a disputed life event is not regenerated under the same id', () => {
   };
   const after = fold([...facts, pinned, dispute], { lifeEventsPerWeek: 2 }, NOW);
   assert.equal(after.eventsAll.some((event) => event.id === target.id), false);
-  assert.deepEqual(after.disputedEventIds, [target.id]);
+  assert.deepEqual(after.deadEventIds, [target.id]);
 
   const regenerated = generateLife({ seed: after.seed, view: after, cfg: { lifeEventsPerWeek: 2 }, days: 30, now: NOW });
   assert.equal(regenerated.events.some((event) => event.id === target.id), false, 'the correction must stick');
+});
+
+test('a forgotten life event is not regenerated either', () => {
+  const born = NOW - 30 * DAY;
+  const facts = [birth('mem-17', born)];
+  const before = fold(facts, { lifeEventsPerWeek: 2 }, NOW);
+  const life = generateLife({ seed: before.seed, view: before, cfg: { lifeEventsPerWeek: 2 }, days: 30, now: NOW });
+  const target = life.events.find((event) => event.day < life.toDay);
+  assert.ok(target, 'the fixture needs a past event');
+
+  const pinned = {
+    seq: 2,
+    at: NOW - 1_000,
+    kind: 'event',
+    data: { id: target.id, day: target.day, kind: target.kind, text: target.text },
+    source: 'sim',
+    evidence: 'confirmed',
+  };
+  const forget = { seq: 3, at: NOW - 500, kind: 'tombstone', data: { targetSeq: 2 }, source: 'user', evidence: 'confirmed' };
+  const after = fold([...facts, pinned, forget], { lifeEventsPerWeek: 2 }, NOW);
+  assert.equal(after.eventsAll.some((event) => event.id === target.id), false);
+  assert.deepEqual(after.deadEventIds, [target.id]);
+
+  const regenerated = generateLife({ seed: after.seed, view: after, cfg: { lifeEventsPerWeek: 2 }, days: 30, now: NOW });
+  assert.equal(regenerated.events.some((event) => event.id === target.id), false, 'a deleted event must stay deleted');
 });
 
 test('a hit carries a readable local date', () => {
