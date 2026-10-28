@@ -80,19 +80,22 @@ test('a child is described at the age the child actually is', () => {
     const persona = derivePersona(`child-age-seed-${index}`);
     const child = persona.relations.find((relation) => relation.kind === 'child');
     if (!child) continue;
-    if (persona.age >= 50) {
-      older += 1;
-      // A child born when she was 27–34 is a grown adult by the time she is 50.
-      assert.ok(!/幼儿园|小学|在老家由父母带着/.test(child.detail), `${persona.age}: ${child.detail}`);
-    }
-    if (persona.age < 46) {
-      younger += 1;
-      // Under 46 the child cannot yet be 19, so adult phrasing is impossible.
-      assert.ok(!/外地工作|过年才回来|偶尔打个电话/.test(child.detail), `${persona.age}: ${child.detail}`);
-    }
+    // The child's age is what the family timeline says, not a guess from her own age.
+    const childAge = persona.age - persona.family.childBornAt;
+    const pool =
+      childAge < 7
+        ? /幼儿园|在老家由父母带着|照片里/
+        : childAge < 13
+          ? /小学|在老家由父母带着|照片里/
+          : childAge < 19
+            ? /中学|不太爱说话|周末才回家/
+            : /外地工作|过年才回来|偶尔打个电话/;
+    assert.ok(pool.test(child.detail), `child aged ${childAge}: ${child.detail}`);
+    if (childAge >= 19) older += 1;
+    else younger += 1;
   }
-  assert.ok(older > 3, `expected older parents, got ${older}`);
-  assert.ok(younger > 3, `expected younger parents, got ${younger}`);
+  assert.ok(older > 3, `expected grown children, got ${older}`);
+  assert.ok(younger > 3, `expected younger children, got ${younger}`);
 });
 
 test('a couple with a child never just moved in together', () => {

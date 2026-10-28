@@ -294,14 +294,15 @@ function deriveRelations(rnd, jobCategory, age, shape = {}) {
     relations.push({ id: 'work', kind: 'work', role, name: anyName(), detail });
   }
 
-  const hasPartner = age >= 25 && rnd() < 0.45;
-  // Decided before the partner's description is drawn: "刚搬到一起住" cannot be true of a
-  // couple with a four-year-old, so that option is unavailable once a child exists.
-  const hasChild = hasPartner && age >= 32 && rnd() < 0.4;
+  // The family comes from a dedicated stream and is computed once, in derivePersona, so
+  // the timeline and the cast cannot disagree about when the child was born.
+  const partnerAge = Number.isFinite(shape.partnerAge) ? shape.partnerAge : undefined;
+  const childBornAt = Number.isFinite(shape.childBornAt) ? shape.childBornAt : undefined;
+  const hasPartner = partnerAge !== undefined;
+  const hasChild = hasPartner && childBornAt !== undefined;
   if (hasPartner) {
     // How long they have been together has to come from her age, not from a fixed pool:
     // "在一起三年了" on a 56-year-old contradicts a timeline that starts at 25.
-    const partnerAge = Math.max(18, Math.min(age - 2, 24 + Math.floor(rnd() * 6)));
     const together = Math.max(1, age - partnerAge);
     let partnerPool;
     if (together <= 3) {
@@ -314,9 +315,6 @@ function deriveRelations(rnd, jobCategory, age, shape = {}) {
     relations.push({ id: 'partner', kind: 'partner', role: '伴侣', name: anyName(), detail: pick(rnd, partnerPool) });
     if (hasChild) {
       const girl = rnd() < 0.5;
-      // Born when she was somewhere in her late twenties to mid thirties, so the child's
-      // present age follows, and so does the sentence.
-      const childBornAt = Math.max(24, Math.min(age - 1, 27 + Math.floor(rnd() * 8)));
       const childAge = Math.max(0, age - childBornAt);
       const childPool =
         childAge < 7 ? CHILD_DETAIL_YOUNG : childAge < 13 ? CHILD_DETAIL_KID : childAge < 19 ? CHILD_DETAIL_TEEN : CHILD_DETAIL_ADULT;
@@ -348,6 +346,22 @@ function relationForNow(relation, jobChosen) {
     role: '前同事',
     detail: presentTense.has(relation.detail) ? '偶尔下班一起走一段' : relation.detail,
   };
+}
+
+/**
+ * The child's sentence has to keep matching the child as she grows: a 13-year-old cannot
+ * still be 上小学二年级 just because she was 12 when the persona was derived.
+ * @param {object} relation - the derived child relation.
+ * @param {number} childAge - how old the child is now.
+ * @returns {object} the relation with a sentence that fits.
+ */
+function childRelationFor(relation, childAge) {
+  if (!relation || !Number.isFinite(childAge)) return relation;
+  const pool =
+    childAge < 7 ? CHILD_DETAIL_YOUNG : childAge < 13 ? CHILD_DETAIL_KID : childAge < 19 ? CHILD_DETAIL_TEEN : CHILD_DETAIL_ADULT;
+  if (pool.includes(relation.detail)) return relation;
+  const index = Math.abs(hashString(String(relation.name ?? relation.id))) % pool.length;
+  return { ...relation, detail: pool[index] };
 }
 
 /**
@@ -387,15 +401,20 @@ export function deriveLifeHistory(seed, birthDate, birthCity, age, options = {})
   if (age >= 27) add(26, '换了一次工作');
 
   // A partner and a child must show up on the timeline too, or the cast contradicts
-  // the history.
+  // the history. Their ages come from the cast itself when it supplies them, so the two
+  // can never disagree about how old the child is.
   const relations = Array.isArray(options.relations) ? options.relations : [];
   const partner = relations.find((relation) => relation?.kind === 'partner');
   const child = relations.find((relation) => relation?.kind === 'child');
   // Anchored on her age at birth (constant), never on today's age — otherwise these two
   // dates would slide forward as she grows, and history must not move.
   const seedAge = Number.isFinite(options.seedAge) ? options.seedAge : age;
-  const partnerAge = Math.max(18, Math.min(seedAge - 2, 24 + Math.floor(rnd() * 6)));
-  const childBirthAge = Math.min(seedAge - 1, partnerAge + 1 + Math.floor(rnd() * 3));
+  const partnerAge = Number.isFinite(options.partnerAge)
+    ? options.partnerAge
+    : Math.max(18, Math.min(seedAge - 2, 24 + Math.floor(rnd() * 6)));
+  const childBirthAge = Number.isFinite(options.childBornAt)
+    ? options.childBornAt
+    : Math.min(seedAge - 1, partnerAge + 1 + Math.floor(rnd() * 3));
   if (partner) add(partnerAge, `和${partner.name}在一起`);
   if (child && childBirthAge > partnerAge) add(childBirthAge, `${child.role}出生`);
 
@@ -432,9 +451,20 @@ export function derivePersona(seed) {
   const movedAway = rnd() < 0.55;
   const movedAt = movedAway ? (age >= 22 ? 22 : 18) : undefined;
   const currentCity = movedAway ? pick(rnd, BIRTH_CITIES.filter((city) => city !== birthCity)) : birthCity;
+  // The family timeline is computed once, on its own stream, and then shared with both the
+  // cast and the life history — the one place that decides when the child was born.
+  const familyRnd = mulberry32(hashString(`${seed}#family`));
+  const partnerAge =
+    age >= 25 ? Math.max(18, Math.min(age - 2, 24 + Math.floor(familyRnd() * 6))) : undefined;
+  const childBornAt =
+    partnerAge !== undefined && age >= 32
+      ? Math.max(partnerAge + 1, Math.min(age - 1, partnerAge + 1 + Math.floor(familyRnd() * 4)))
+      : undefined;
   const relations = deriveRelations(rnd, chosen.category, age, {
     moved: movedAway,
     remote: chosen.job.includes('自由'),
+    partnerAge,
+    childBornAt,
   });
   // Three interests, drawn without replacement, so two of them can never be the same.
   const interests = [];
@@ -458,6 +488,7 @@ export function derivePersona(seed) {
     birthDay,
     birthCity,
     relations,
+    family: { partnerAge, childBornAt },
     currentCity,
     movedAt,
     interests,
@@ -1617,6 +1648,8 @@ export function fold(records, cfg, now) {
     movedAt: base.movedAt,
     relations: base.relations,
     seedAge: base.age,
+    partnerAge: base.family?.partnerAge,
+    childBornAt: base.family?.childBornAt,
   });
   const currentCity = overrides.has('city') ? String(overrides.get('city')) : base.currentCity;
   // Places follow the *current* city and the *current* job: move her and the flat moves
@@ -1638,7 +1671,11 @@ export function fold(records, cfg, now) {
     birthDay: base.birthDay,
     birthCity: base.birthCity,
     currentCity,
-    relations: base.relations.map((relation) => relationForNow(relation, jobChosen)),
+    relations: base.relations.map((relation) =>
+      relation.kind === 'child'
+        ? childRelationFor(relation, age - (base.family?.childBornAt ?? age))
+        : relationForNow(relation, jobChosen),
+    ),
     interests: base.interests,
     lifeHistory,
     home: places.home,
