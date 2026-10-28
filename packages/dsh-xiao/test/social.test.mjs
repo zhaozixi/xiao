@@ -256,3 +256,50 @@ test('the card names the neighbourhood she lives in', () => {
   const card = renderCard(view, { cardMaxChars: 400 });
   assert.ok(card.includes(view.home.area), 'the neighbourhood is missing from the card');
 });
+
+test('moving her moves the flat and the workplace with her', () => {
+  const move = { seq: 2, at: START + 1, kind: 'override', data: { field: 'city', value: '苏州' }, source: 'user', evidence: 'confirmed' };
+  const before = fold([birth('place-seed-6')], { growthPerMonth: 1 / 12 }, START);
+  const after = fold([birth('place-seed-6'), move], { growthPerMonth: 1 / 12 }, START + 1);
+  assert.equal(after.currentCity, '苏州');
+  assert.equal(after.home.city, '苏州', 'the flat must be in the city she lives in');
+  if (after.work) assert.equal(after.work.city, '苏州', 'the workplace must be in the same city');
+});
+
+test('losing the job takes the workplace away', () => {
+  const quit = {
+    seq: 2,
+    at: START + 1,
+    kind: 'job',
+    data: { job: '在家待着', category: 'unemployed' },
+    source: 'user',
+    evidence: 'confirmed',
+  };
+  const before = fold([birth('place-seed-7')], { growthPerMonth: 1 / 12 }, START);
+  const after = fold([birth('place-seed-7'), quit], { growthPerMonth: 1 / 12 }, START + 1);
+  assert.equal(after.jobCategory, 'unemployed');
+  assert.equal(after.work, null, 'no job means nowhere to go');
+  assert.ok(after.commute.includes('没有'), 'the commute must say so');
+  assert.equal(after.home.area, before.home.area, 'losing a job does not move her furniture');
+});
+
+test('a partner and a child appear on the timeline, in that order', () => {
+  let seed;
+  let view;
+  for (let index = 0; index < 300 && !view; index += 1) {
+    const candidate = `fam-${index}`;
+    const kinds = derivePersona(candidate).relations.map((relation) => relation.kind);
+    if (kinds.includes('partner') && kinds.includes('child')) {
+      seed = candidate;
+      view = fold([birth(candidate)], { growthPerMonth: 1 / 12 }, START);
+    }
+  }
+  assert.ok(view, 'expected a seed with both a partner and a child');
+  const partner = view.lifeHistory.find((milestone) => milestone.text.includes('在一起'));
+  const child = view.lifeHistory.find(
+    (milestone) => milestone.text.endsWith('出生') && !milestone.text.startsWith('出生在'),
+  );
+  assert.ok(partner, `no partner milestone for ${seed}`);
+  assert.ok(child, `no child milestone for ${seed}`);
+  assert.ok(partner.age < child.age, 'the relationship must start before the child');
+});

@@ -107,7 +107,7 @@ const WORK_DETAIL = ['工作室的搭档', '偶尔一起接活', '上次合作�
 const CLASS_ROLES = ['同班同学', '同宿舍的室友', '一起赶作业的朋友'];
 const CLASS_DETAIL = ['经常一起去图书馆', '这学期见面少了', '上次小组作业一起熬到很晚'];
 const PARTNER_DETAIL = ['在一起三年了', '刚搬到一起住', '总提醒她按时吃饭'];
-const CHILD_DETAIL = ['刚上幼儿园', '上小学二年级', '在老家由父母带着'];
+const CHILD_DETAIL = ['在老家由父母带着', '照片里总是笑着的', '每个月见两三次'];
 
 /** Where the day actually happens: a neighbourhood, a flat, a few familiar corners. */
 const AREAS = ['老城区', '新城区', '江边', '大学城旁边', '地铁沿线', '菜市场附近'];
@@ -125,38 +125,65 @@ const NEARBY = [
 const COMMUTE = ['地铁三站，再走八分钟', '骑车二十分钟', '公交两站加一段路', '走路二十五分钟'];
 
 /**
+ * The flat and the corners around it. Independent of her job, so a job change never
+ * moves her furniture.
+ * @param {string} seed - instance seed.
+ * @param {string} city - where she lives now.
+ * @returns {{home: object, nearby: string[]}} home and familiar spots.
+ */
+export function deriveHome(seed, city) {
+  const rnd = mulberry32(hashString(`${seed}#home`));
+  const area = pick(rnd, AREAS);
+  const home = { city, area, detail: pick(rnd, HOME_DETAIL) };
+  const nearby = [];
+  const pool = [...NEARBY];
+  while (nearby.length < 3 && pool.length > 0) {
+    nearby.push(pool.splice(Math.floor(rnd() * pool.length), 1)[0]);
+  }
+  return { home, nearby };
+}
+
+/**
+ * Where she has to be on a weekday, given what she does *now*. Someone unemployed or
+ * retired has nowhere to go, and that has to show.
+ * @param {string} seed - instance seed.
+ * @param {string} city - where she lives now.
+ * @param {string} job - current job label.
+ * @param {string} jobCategory - current category.
+ * @returns {{work: object|null, commute: string}} workplace and route.
+ */
+export function deriveWork(seed, city, job, jobCategory) {
+  const rnd = mulberry32(hashString(`${seed}#work`));
+  if (jobCategory === 'student') {
+    return {
+      work: { city, area: pick(rnd, AREAS), name: '学校', detail: '上课的日子基本都在那边' },
+      commute: '公交四十分钟',
+    };
+  }
+  if (jobCategory === 'job_seeking' || jobCategory === 'unemployed' || jobCategory === 'retired') {
+    return { work: null, commute: '现在没有固定要去的班' };
+  }
+  if (typeof job === 'string' && job.includes('自由')) {
+    return { work: { city, area: '家里那张桌子', name: '家里那张桌子', detail: '在家工作，没有通勤' }, commute: '没有通勤' };
+  }
+  return {
+    work: { city, area: pick(rnd, AREAS), name: '上班的地方', detail: '一周去五天' },
+    commute: pick(rnd, COMMUTE),
+  };
+}
+
+/**
  * Anchor her to one flat and, when she has somewhere to be, one workplace plus the
  * route between them. Deterministic; she can add more in conversation.
  * @param {string} seed - instance seed.
  * @param {string} city - where she lives now.
  * @param {string} job - job label at birth.
  * @param {string} jobCategory - its category.
- * @returns {{home: object, work: object, commute: string, nearby: string[]}} places.
+ * @returns {{home: object, work: object|null, commute: string, nearby: string[]}} places.
  */
 export function derivePlaces(seed, city, job, jobCategory) {
-  const rnd = mulberry32(hashString(`${seed}#places`));
-  const area = pick(rnd, AREAS);
-  const home = { city, area, detail: pick(rnd, HOME_DETAIL) };
-
-  const nearby = [];
-  const pool = [...NEARBY];
-  while (nearby.length < 3 && pool.length > 0) {
-    nearby.push(pool.splice(Math.floor(rnd() * pool.length), 1)[0]);
-  }
-
-  const remote = typeof job === 'string' && job.includes('自由');
-  let work;
-  let commute = '';
-  if (jobCategory === 'student') {
-    work = { city, area: pick(rnd, AREAS), name: '学校', detail: '上课的日子基本都在那边' };
-    commute = '公交四十分钟';
-  } else if (remote) {
-    work = { city, area, name: '家里那张桌子', detail: '在家工作，没有通勤' };
-    commute = '没有通勤';
-  } else {
-    work = { city, area: pick(rnd, AREAS), name: '上班的地方', detail: '一周去五天' };
-    commute = pick(rnd, COMMUTE);
-  }
+  const { home, nearby } = deriveHome(seed, city);
+  const { work, commute } = deriveWork(seed, city, job, jobCategory);
   return { home, work, commute, nearby };
 }
 
@@ -247,6 +274,20 @@ export function deriveLifeHistory(seed, birthDate, birthCity, age, options = {})
     add(19, '第一份工作');
   }
   if (age >= 27) add(26, '换了一次工作');
+
+  // A partner and a child must show up on the timeline too, or the cast contradicts
+  // the history.
+  const relations = Array.isArray(options.relations) ? options.relations : [];
+  const partner = relations.find((relation) => relation?.kind === 'partner');
+  const child = relations.find((relation) => relation?.kind === 'child');
+  // Anchored on her age at birth (constant), never on today's age — otherwise these two
+  // dates would slide forward as she grows, and history must not move.
+  const seedAge = Number.isFinite(options.seedAge) ? options.seedAge : age;
+  const partnerAge = Math.max(18, Math.min(seedAge - 2, 24 + Math.floor(rnd() * 6)));
+  const childBirthAge = Math.min(seedAge - 1, partnerAge + 1 + Math.floor(rnd() * 3));
+  if (partner) add(partnerAge, `和${partner.name}在一起`);
+  if (child && childBirthAge > partnerAge) add(childBirthAge, `${child.role}出生`);
+
   if (Number.isFinite(options.movedAt) && options.currentCity && options.currentCity !== birthCity) {
     add(options.movedAt, `搬到${options.currentCity}`);
   }
@@ -869,8 +910,13 @@ export function fold(records, cfg, now) {
   const lifeHistory = deriveLifeHistory(birth.data.seed, birthDate, base.birthCity, age, {
     currentCity: base.currentCity,
     movedAt: base.movedAt,
+    relations: base.relations,
+    seedAge: base.age,
   });
   const currentCity = overrides.has('city') ? String(overrides.get('city')) : base.currentCity;
+  // Places follow the *current* city and the *current* job: move her and the flat moves
+  // with her; lose the job and the workplace disappears.
+  const places = derivePlaces(birth.data.seed, currentCity, job, jobCategory);
 
   return {
     instanceId: birth.data.instanceId,
@@ -887,10 +933,10 @@ export function fold(records, cfg, now) {
     currentCity,
     relations: base.relations,
     lifeHistory,
-    home: base.places.home,
-    work: base.places.work,
-    commute: base.places.commute,
-    nearby: [...new Set([...base.places.nearby, ...nearbyAdditions])],
+    home: places.home,
+    work: places.work,
+    commute: places.commute,
+    nearby: [...new Set([...places.nearby, ...nearbyAdditions])].slice(0, 12),
     job: overrides.has('job') ? String(overrides.get('job')) : job,
     jobCategory,
     outlook: base.outlook,
