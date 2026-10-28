@@ -21,6 +21,27 @@ test('derivePersona is deterministic for one seed', () => {
   assert.deepEqual(derivePersona(SEED), derivePersona(SEED));
 });
 
+test('age always agrees with the birth date', () => {
+  const now = Date.now();
+  for (let index = 0; index < 120; index += 1) {
+    const born = now - 60 * 24 * 60 * 60 * 1000;
+    const fact = {
+      seq: 1,
+      at: born,
+      kind: 'birth',
+      data: { instanceId: `age-${index}`, seed: `age-seed-${index}`, birthAt: born, rulesVersion: RULES_VERSION },
+      source: 'seed',
+      evidence: 'confirmed',
+    };
+    const view = fold([fact], {}, now);
+    const [year, month, day] = view.birthDate.split('-').map(Number);
+    const thisYear = new Date(now).getFullYear();
+    const birthday = new Date(thisYear, month - 1, day).getTime();
+    const fromCalendar = thisYear - year - (birthday > now ? 1 : 0);
+    assert.equal(view.age, fromCalendar, `${view.birthDate} shown as ${view.age}, calendar says ${fromCalendar}`);
+  }
+});
+
 test('different seeds produce different characters', () => {
   const a = derivePersona('seed-a');
   const b = derivePersona('seed-b');

@@ -1598,22 +1598,18 @@ export function fold(records, cfg, now) {
   // With the feature switched off, the seed's job counts as decided: no "undecided" leaks.
   if (cfg?.chooseOwnJob === false) jobChosen = true;
 
-  const months = Math.max(0, (now - birthAt) / MONTH_MS);
   const growth = clamp(Number(cfg?.growthPerMonth ?? 1 / 12), 1 / 12, 1 / 4);
-  const aged = clamp(base.age + Math.floor(months * growth), AGE_MIN, AGE_MAX);
-  const age = ageCorrection
-    ? clamp(
-        Math.floor(ageCorrection.value + Math.max(0, (now - ageCorrection.at) / MONTH_MS) * growth),
-        AGE_MIN,
-        AGE_MAX,
-      )
-    : aged;
-
   // The birthday is anchored once (at birth, or at the moment of a correction) and then
-  // fixed: aging may run faster than a calendar, but the date she was born cannot move.
+  // fixed: the date she was born cannot move.
   const anchorAt = ageCorrection ? ageCorrection.at : birthAt;
   const anchorAge = ageCorrection ? ageCorrection.value : base.age;
   const birthDate = birthDateString(anchorAt, anchorAge, base.birthMonth, base.birthDay);
+  // Her clock runs at `growth` years per month, and her age is read off that clock against
+  // the birth date — not accumulated separately. Accumulating was why a 23-year-old could
+  // be born on a December date and still show 22 for most of the year: the birthday never
+  // moved the number, only the instance anniversary did.
+  const herNow = anchorAt + Math.max(0, now - anchorAt) * (growth * 12);
+  const age = clamp(calendarAge(birthDate, herNow), AGE_MIN, AGE_MAX);
   // History is frozen: it keeps the move that the seed decided, even if she has since
   // been moved somewhere else. Current location is state, not history.
   const lifeHistory = deriveLifeHistory(birth.data.seed, birthDate, base.birthCity, age, {
@@ -1676,6 +1672,22 @@ export function fold(records, cfg, now) {
 }
 
 /**
+ * How old someone born on `birthDate` is at instant `at`, counting the birthday itself.
+ * @param {string} birthDate - `YYYY-MM-DD`.
+ * @param {number} at - wall clock.
+ * @returns {number} whole years.
+ */
+function calendarAge(birthDate, at) {
+  const [year, month, day] = String(birthDate).split('-').map(Number);
+  if (![year, month, day].every(Number.isFinite)) return 0;
+  const when = new Date(at);
+  let age = when.getFullYear() - year;
+  const birthdayThisYear = new Date(when.getFullYear(), month - 1, day).getTime();
+  if (birthdayThisYear > when.getTime()) age -= 1;
+  return Math.max(0, age);
+}
+
+/**
  * Turn an anchor instant plus the age at that instant into the date she was born.
  * @param {number} at - wall clock of the anchor.
  * @param {number} age - her age at that anchor.
@@ -1685,10 +1697,13 @@ export function fold(records, cfg, now) {
  */
 function birthDateString(at, age, month, day) {
   const anchor = new Date(at);
-  let year = anchor.getFullYear() - Math.max(0, Math.floor(Number(age) || 0));
-  const candidate = new Date(year, month - 1, day);
-  if (candidate.getTime() > at) year -= 1;
-  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  // Age at `at` is what the date has to agree with. If her birthday this year has not
+  // happened yet, she was born one year earlier than `year - age` suggests; comparing the
+  // candidate date itself against `at` never fires, because it is always in the past.
+  const year = anchor.getFullYear() - Math.max(0, Math.floor(Number(age) || 0));
+  const birthdayThisYear = new Date(anchor.getFullYear(), month - 1, day).getTime();
+  const birthYear = birthdayThisYear <= anchor.getTime() ? year : year - 1;
+  return `${birthYear}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
 /**
