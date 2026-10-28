@@ -40,6 +40,14 @@ window.__ModuleLoader__.load({
         born: '出生于',
         openPage: '事实时间线在左侧栏的「晓」页面。',
         note: '这里只读。改状态要通过对话里的 xiao_update 工具。',
+        resetOpen: '重置晓…',
+        resetWarning:
+          '这会清空全部事实、她记住的事和「已见面」标记，然后重新随机性别、年龄、职业、性格。不可撤销。已经说过的对话不会被删除。',
+        resetConfirm: '确认重置',
+        resetCancel: '取消',
+        resetWorking: '重置中…',
+        resetDone: '已重置，新的晓已经出现。',
+        resetFailed: '重置失败',
         fields: {
           gender: '性别',
           age: '年龄',
@@ -109,6 +117,14 @@ window.__ModuleLoader__.load({
         born: 'Born',
         openPage: 'The fact timeline lives on the 晓 panel in the left sidebar.',
         note: 'Read-only. State changes go through the xiao_update tool in chat.',
+        resetOpen: 'Reset 晓…',
+        resetWarning:
+          'This erases every fact, everything she remembers and the first-meeting marker, then rolls a new gender, age, job and personality. Irreversible. Messages already written are not deleted.',
+        resetConfirm: 'Reset her',
+        resetCancel: 'Cancel',
+        resetWorking: 'Resetting…',
+        resetDone: 'Reset done. A new 晓 is here.',
+        resetFailed: 'Reset failed',
         fields: {
           gender: 'Gender',
           age: 'Age',
@@ -754,18 +770,94 @@ window.__ModuleLoader__.load({
       );
     }
 
+    function ResetBlock(props) {
+      const { dict, reload } = props;
+      const [stage, setStage] = React.useState('idle');
+      const [detail, setDetail] = React.useState('');
+
+      const submit = () => {
+        setStage('working');
+        fetch('api/xiao.reset', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-xiao-client': 'settings' },
+          body: JSON.stringify({ confirm: 'reset' }),
+        })
+          .then((response) =>
+            response
+              .json()
+              .catch(() => ({}))
+              .then((body) => ({ ok: response.ok, body })),
+          )
+          .then(({ ok, body }) => {
+            if (ok && body?.applied) {
+              setStage('done');
+              setDetail(body.instanceId ? String(body.instanceId).slice(0, 8) : '');
+              reload();
+            } else {
+              setStage('error');
+              setDetail(body?.reason || `HTTP ${body?.code ?? ''}`.trim());
+            }
+          })
+          .catch((error) => {
+            setStage('error');
+            setDetail(String(error?.message ?? error));
+          });
+      };
+
+      const outline = {
+        cursor: 'pointer',
+        font: 'inherit',
+        fontSize: 12,
+        padding: '4px 12px',
+        borderRadius: 6,
+        border: `1px solid ${C.line}`,
+        background: 'transparent',
+        color: C.dim,
+      };
+      const danger = { ...outline, color: 'var(--dsw-alias-state-error-primary)', borderColor: 'var(--dsw-alias-state-error-primary)' };
+
+      if (stage === 'idle') {
+        return h('div', { style: { marginTop: 20, paddingTop: 14, borderTop: `1px solid ${C.line}` } },
+          h('button', { type: 'button', onClick: () => setStage('confirming'), style: danger }, dict.resetOpen));
+      }
+      if (stage === 'confirming') {
+        return h(
+          'div',
+          { style: { marginTop: 20, paddingTop: 14, borderTop: `1px solid ${C.line}` } },
+          h('div', { style: { color: C.text, fontSize: 12, lineHeight: 1.7, marginBottom: 10 } }, dict.resetWarning),
+          h('div', { style: { display: 'flex', gap: 8 } },
+            h('button', { type: 'button', onClick: submit, style: danger }, dict.resetConfirm),
+            h('button', { type: 'button', onClick: () => setStage('idle'), style: outline }, dict.resetCancel)),
+        );
+      }
+      if (stage === 'working') {
+        return h('div', { style: { marginTop: 20, paddingTop: 14, borderTop: `1px solid ${C.line}`, color: C.dim, fontSize: 12 } }, dict.resetWorking);
+      }
+      if (stage === 'done') {
+        return h('div', { style: { marginTop: 20, paddingTop: 14, borderTop: `1px solid ${C.line}`, color: C.text, fontSize: 12 } },
+          `${dict.resetDone}${detail ? `（${detail}）` : ''}`);
+      }
+      return h('div', { style: { marginTop: 20, paddingTop: 14, borderTop: `1px solid ${C.line}`, color: C.error, fontSize: 12 } },
+        `${dict.resetFailed}：${detail}`);
+    }
+
     function XiaoSection(props) {
       const ctx = props?.ctx;
       const lang = useLang(ctx);
       const dict = DICT[lang] ?? DICT.zh;
-      const { state } = useFeed('api/xiao.state');
+      const { state, reload } = useFeed('api/xiao.state');
       let content;
       try {
         content = settingsContent(state, dict, lang);
       } catch (error) {
         content = errorView(error);
       }
-      return h('div', { style: { padding: '2px 2px 16px', maxWidth: 720 } }, content);
+      return h(
+        'div',
+        { style: { padding: '2px 2px 16px', maxWidth: 720 } },
+        content,
+        state.status === 'ready' ? h(ResetBlock, { dict, reload }) : null,
+      );
     }
 
     class Boundary extends React.Component {

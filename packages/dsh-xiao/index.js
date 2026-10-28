@@ -165,6 +165,14 @@ export function apply(ctx, config) {
     return ensureBirth();
   };
 
+  /** Shared by the tool and the page's button: erase, re-birth, and forget per-session state. */
+  const performReset = async () => {
+    const view = await resetInstance();
+    firstMessageSeen.clear();
+    introPending.clear();
+    return view;
+  };
+
   ctx.effect(() => {
     let cancelled = false;
     let domain;
@@ -465,9 +473,7 @@ export function apply(ctx, config) {
         return { applied: false, code: 'needs_confirmation', reason: '重置不可逆；先向用户确认，再带 confirm: "reset" 调用' };
       }
       if (!state.ready) return { applied: false, code: 'not_ready', reason: state.failure ?? 'still opening storage' };
-      const view = await resetInstance();
-      firstMessageSeen.clear();
-      introPending.clear();
+      const view = await performReset();
       return { applied: true, instanceId: view.instanceId, card: renderCard(view, cfg) };
     },
   });
@@ -574,10 +580,19 @@ export function apply(ctx, config) {
   // channel (`/api/...`) rather than on a bare web-server route: the carrier applies
   // the Host/Origin checks and browser authentication, so this endpoint is not readable
   // by an arbitrary local process. `pageHits` stays as a diagnostic counter.
+  //
+  // The reset route is POST-only and still demands `confirm: "reset"`, so a stray click
+  // or a hand-written request cannot wipe her by accident.
   const connection = ctx.get('connection');
   if (connection && connection.fetch && typeof connection.fetch.register === 'function') {
+    const json = (value, status = 200) =>
+      new Response(JSON.stringify(value), {
+        status,
+        headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+      });
     ctx.effect(() => {
-      const dispose = connection.fetch.register({
+      const disposers = [];
+      disposers.push(connection.fetch.register({
         path: '/api/xiao.state',
         methods: ['GET'],
         requestBody: 'buffered',
@@ -613,10 +628,41 @@ export function apply(ctx, config) {
             },
           });
         },
-      });
-      log('info', 'serving GET /api/xiao.state for the settings page');
+      }));
+
+      disposers.push(connection.fetch.register({
+        path: '/api/xiao.reset',
+        methods: ['POST'],
+        requestBody: 'buffered',
+        fetch: async (request) => {
+          if (request.method !== 'POST') return new Response('method not allowed', { status: 405 });
+          let payload;
+          try {
+            payload = await request.json();
+          } catch (error) {
+            payload = undefined;
+          }
+          if (!payload || payload.confirm !== 'reset') {
+            return json({ applied: false, code: 'needs_confirmation', reason: '重置不可逆；需要 confirm: "reset"' }, 400);
+          }
+          if (!state.ready) {
+            return json({ applied: false, code: 'not_ready', reason: state.failure ?? 'storage is not ready' }, 503);
+          }
+          try {
+            const view = await performReset();
+            log('info', `reset from the page (instance ${view.instanceId})`);
+            return json({ applied: true, instanceId: view.instanceId, card: renderCard(view, cfg) });
+          } catch (error) {
+            return json({ applied: false, code: 'reset_failed', reason: String(error?.message ?? error) }, 500);
+          }
+        },
+      }));
+
+      log('info', 'serving GET /api/xiao.state and POST /api/xiao.reset');
       feedState = 'ok';
-      return () => dispose();
+      return () => {
+        for (const dispose of disposers) dispose();
+      };
     });
   } else {
     feedState = 'unavailable';
