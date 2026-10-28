@@ -123,9 +123,9 @@ dsh --profile <name> ...   # 具体以 plugin_manager 返回为准
 | 所有会话都带人设卡 | `enabledForPresets` 默认是空数组 | 显式配置 preset 白名单 |
 | 设置页一片空白 | 客户端 bundle 还是旧的 | 硬刷新；仍不行则重启 DSH |
 | 设置页显示红字 `xiao render error` | 客户端渲染异常 | 红字里有完整堆栈，直接上报 |
-| 设置页显示「读取失败」 | `/api/xiao.state` 不可达（插件未激活、连接服务缺席） | 检查插件行是否 `active`、日志里有没有 `connection service unavailable` |
+| 设置页显示「读取失败」：`HTTP 404` | 数据路由没注册：`connection` 未注入、或 Host API 变了 | 先看 `xiao_state` 的 `feed` 字段：`ok` / `missing` / `unavailable` |
 | 想从头开始 | — | 让晓调 `xiao_reset`（带 `confirm: "reset"`）；或手工删掉 `~/.dsh/storages/dsh_xiao.json`。**不可逆** |
-| 插件行报 `service 'x' has no method 'y'` | 宿主 API 变了 | 启动自检失败会明确点名服务与方法；按报错改插件或降级宿主 |
+| 插件行报 `service 'x' ...` | 宿主 API 变了 | 启动自检会点名服务与形状不匹配；按报错改插件或降级宿主 |
 
 **安全说明（必须知道）**：设置页的数据来自 `GET /api/xiao.state`，它注册在 DSH 的 connection 通道上，由载波统一做 Host/Origin 检查与浏览器鉴权——**无凭证的直连返回 401**。v1.0 曾有一个未鉴权的 `/xiao/state`，已移除。`xiao_state` 返回里的 `pageRequests`（`total` / `page`）可以用来核对页面请求是否被接受。
 

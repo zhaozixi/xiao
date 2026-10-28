@@ -87,6 +87,9 @@ export function apply(ctx, config) {
   const state = { domain: undefined, view: null, ready: false, failure: undefined };
   const sessions = new Map();
   const pageHits = { total: 0, page: 0 };
+  // 'missing' until the feed route registers, then 'ok'. Surfaced by `xiao_state` so a
+  // missing route is diagnosable without the browser.
+  let feedState = 'missing';
   // Sessions whose first user message has already been considered for the introduction,
   // and sessions waiting for their next prompt assembly to carry the one-shot hint.
   const firstMessageSeen = new Set();
@@ -109,27 +112,20 @@ export function apply(ctx, config) {
   }
 
   // Fail loud on a changed Host API instead of a cryptic TypeError at the first call.
+  // `connection.fetch` is an object with `register`, not a method, so each entry carries
+  // its own shape predicate.
   const capabilities = [
-    ['storageDomain', ['open'], true],
-    ['systemPrompt', ['context'], true],
-    ['tools', ['register', 'guard'], true],
-    ['connection', ['fetch'], false],
+    ['storageDomain', (service) => typeof service.open === 'function'],
+    ['systemPrompt', (service) => typeof service.context === 'function'],
+    ['tools', (service) => typeof service.register === 'function' && typeof service.guard === 'function'],
+    // Injected, not optional: `ctx.get` returns undefined for a service outside `inject`,
+    // which silently disabled the page feed once. Keep it declared.
+    ['connection', (service) => Boolean(service.fetch) && typeof service.fetch.register === 'function'],
   ];
-  for (const [name, methods, required] of capabilities) {
+  for (const [name, ok] of capabilities) {
     const service = ctx.get(name);
-    if (!service) {
-      const message = `service '${name}' is unavailable`;
-      if (required) throw new Error(`${message}; dsh-xiao cannot run`);
-      log('warn', `${message}: the settings page will not have a data feed`);
-      continue;
-    }
-    for (const method of methods) {
-      if (typeof service[method] !== 'function') {
-        const message = `service '${name}' has no method '${method}' (Host API changed?)`;
-        if (required) throw new Error(`${message}; dsh-xiao cannot run`);
-        log('warn', `${message}: the settings page will not have a data feed`);
-      }
-    }
+    if (!service) throw new Error(`service '${name}' is unavailable; dsh-xiao cannot run`);
+    if (!ok(service)) throw new Error(`service '${name}' does not have the expected shape (Host API changed?); dsh-xiao cannot run`);
   }
 
   const refresh = () => {
@@ -524,6 +520,7 @@ export function apply(ctx, config) {
         card: renderCard(view, cfg),
         factsCount: view.factCount,
         pageRequests: { ...pageHits },
+        feed: feedState,
       };
       if (input.includeFacts) payload.facts = scoped.sort(compareSeq);
       return payload;
@@ -596,9 +593,11 @@ export function apply(ctx, config) {
         },
       });
       log('info', 'serving GET /api/xiao.state for the settings page');
+      feedState = 'ok';
       return () => dispose();
     });
   } else {
+    feedState = 'unavailable';
     log('warn', 'connection service unavailable: the settings page has no data feed');
   }
 
@@ -639,4 +638,4 @@ export function apply(ctx, config) {
   log('info', 'mounted');
 }
 
-export const inject = ['storageDomain', 'systemPrompt', 'tools'];
+export const inject = ['storageDomain', 'systemPrompt', 'tools', 'connection'];
