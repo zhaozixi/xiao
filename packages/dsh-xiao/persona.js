@@ -152,7 +152,9 @@ const COMMUTE = ['地铁三站，再走八分钟', '骑车二十分钟', '公交
  * @returns {{home: object, nearby: string[]}} home and familiar spots.
  */
 export function deriveHome(seed, city) {
-  const rnd = mulberry32(hashString(`${seed}#home`));
+  // The city is part of the salt: moving to another city must not reproduce the same
+  // street and the same three shops she had in the old one.
+  const rnd = mulberry32(hashString(`${seed}#home#${city}`));
   const area = pick(rnd, AREAS);
   const home = { city, area, detail: pick(rnd, HOME_DETAIL) };
   const nearby = [];
@@ -173,7 +175,7 @@ export function deriveHome(seed, city) {
  * @returns {{work: object|null, commute: string}} workplace and route.
  */
 export function deriveWork(seed, city, job, jobCategory) {
-  const rnd = mulberry32(hashString(`${seed}#work`));
+  const rnd = mulberry32(hashString(`${seed}#work#${city}`));
   if (jobCategory === 'student') {
     return {
       work: { city, area: pick(rnd, AREAS), name: '学校', detail: '上课的日子基本都在那边' },

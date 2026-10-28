@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { CATALOG, RULES_VERSION, catchupWindow, fold, generateLife, suggestTransition } from '../persona.js';
+import { CATALOG, RULES_VERSION, catchupWindow, deriveHome, fold, generateLife, suggestTransition } from '../persona.js';
 
 const DAY = 86_400_000;
 const NOW = new Date(2026, 9, 28, 15, 0).getTime();
@@ -96,4 +96,21 @@ test('a short gap only pins the missing days', () => {
   const today = 20_000;
   const window = catchupWindow(today - 3, today, 120);
   assert.deepEqual(window, { from: today - 2, to: today - 1 });
+});
+
+// ---------------------------------------------------------------------------
+// Moving is a physical event, not just a label
+// ---------------------------------------------------------------------------
+
+test('moving to another city gives her a different flat and different corners', () => {
+  let changed = 0;
+  for (let index = 0; index < 20; index += 1) {
+    const seed = `move-seed-${index}`;
+    const here = deriveHome(seed, '大连');
+    const there = deriveHome(seed, '苏州');
+    assert.equal(there.home.city, '苏州');
+    assert.equal(here.home.city, '大连');
+    if (JSON.stringify(here) !== JSON.stringify(there)) changed += 1;
+  }
+  assert.equal(changed, 20, 'the same street cannot exist in two cities');
 });
