@@ -21,7 +21,24 @@ test('the daily question is about her own life, and the same all day', () => {
   const first = researchQuery(view, 20_000);
   const second = researchQuery(view, 20_000);
   assert.equal(first, second);
-  assert.ok(first.includes(view.hobby) || first.includes(view.currentCity), first);
+  const mentionsHerLife =
+    view.interests.some((interest) => first.includes(interest)) ||
+    first.includes(view.hobby) ||
+    first.includes(view.currentCity);
+  assert.ok(mentionsHerLife, first);
+});
+
+test('three interests, distinct, and they steer what she reads', () => {
+  const view = fold([birth('research-seed-2')], {}, START);
+  assert.equal(view.interests.length, 3);
+  assert.equal(new Set(view.interests).size, 3);
+
+  let fromInterest = 0;
+  for (let day = 20_000; day < 20_060; day += 1) {
+    const query = researchQuery(view, day);
+    if (view.interests.some((interest) => query.includes(interest))) fromInterest += 1;
+  }
+  assert.ok(fromInterest > 0 && fromInterest < 60, `interests drove ${fromInterest}/60 queries`);
 });
 
 test('different days ask different things', () => {

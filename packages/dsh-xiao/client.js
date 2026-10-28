@@ -71,6 +71,7 @@ window.__ModuleLoader__.load({
         research: '最近自己查的事',
         researchEmpty: '还没有查过什么。',
         relations: '身边的人',
+        interests: '兴趣',
         history: '大事记',
         kinds: {
           birth: '出生',
@@ -161,6 +162,7 @@ window.__ModuleLoader__.load({
         research: 'Looked up on her own',
         researchEmpty: 'Nothing looked up yet.',
         relations: 'People around her',
+        interests: 'Interests',
         history: 'Life so far',
         kinds: {
           birth: 'birth',
@@ -847,6 +849,14 @@ window.__ModuleLoader__.load({
               ),
             )
           : h('div', { key: 'relations-empty', style: { color: C.dim, fontSize: 13 } }, '—'),
+        heading('h-interests', dict.interests),
+        Array.isArray(value.interests) && value.interests.length > 0
+          ? h(
+              'ul',
+              { key: 'interests', style: { margin: '2px 0 0', paddingLeft: 18, fontSize: 13, lineHeight: 1.75, color: C.text } },
+              value.interests.map((interest) => h('li', { key: interest }, interest)),
+            )
+          : h('div', { key: 'interests-empty', style: { color: C.dim, fontSize: 13 } }, '—'),
         heading('h-history', dict.history),
         Array.isArray(value.lifeHistory) && value.lifeHistory.length > 0
           ? h(

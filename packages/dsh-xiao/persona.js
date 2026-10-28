@@ -106,6 +106,26 @@ const WORK_ROLES = ['同事', '前同事', '合作过的编辑', '常约稿的�
 const WORK_DETAIL = ['工作室的搭档', '偶尔一起接活', '上次合作之后就没再聊过'];
 const CLASS_ROLES = ['同班同学', '同宿舍的室友', '一起赶作业的朋友'];
 const CLASS_DETAIL = ['经常一起去图书馆', '这学期见面少了', '上次小组作业一起熬到很晚'];
+/** What she gravitates to on her own: three of these, and they drive what she reads. */
+const INTERESTS = [
+  '旧地图',
+  '独立漫画',
+  '老电影',
+  '胶片摄影',
+  '地方志',
+  '天文',
+  '面包烘焙',
+  '植物养护',
+  '旧家具改造',
+  '方言',
+  '街拍',
+  '手工装帧',
+  '声音采样',
+  '城市考古',
+  '旧唱片',
+  '编织',
+];
+
 const PARTNER_DETAIL = ['在一起三年了', '刚搬到一起住', '总提醒她按时吃饭'];
 const CHILD_DETAIL = ['在老家由父母带着', '照片里总是笑着的', '每个月见两三次'];
 
@@ -320,6 +340,12 @@ export function derivePersona(seed) {
   const movedAway = rnd() < 0.55;
   const movedAt = movedAway ? (age >= 22 ? 22 : 18) : undefined;
   const currentCity = movedAway ? pick(rnd, BIRTH_CITIES.filter((city) => city !== birthCity)) : birthCity;
+  // Three interests, drawn without replacement, so two of them can never be the same.
+  const interests = [];
+  const interestPool = [...INTERESTS];
+  while (interests.length < 3 && interestPool.length > 0) {
+    interests.push(interestPool.splice(Math.floor(rnd() * interestPool.length), 1)[0]);
+  }
 
   return {
     gender: gender.key,
@@ -338,6 +364,7 @@ export function derivePersona(seed) {
     relations,
     currentCity,
     movedAt,
+    interests,
     places: derivePlaces(seed, currentCity, chosen.job, chosen.category),
   };
 }
@@ -566,12 +593,17 @@ export function researchQuery(view, day) {
   const rnd = mulberry32(hashString(`${view?.seed ?? 'x'}#research#${day}`));
   const hobby = typeof view?.hobby === 'string' && view.hobby.length > 0 ? view.hobby : '散步';
   const city = typeof view?.currentCity === 'string' ? view.currentCity : (view?.birthCity ?? '');
+  const interests = Array.isArray(view?.interests)
+    ? view.interests.filter((interest) => typeof interest === 'string' && interest.length > 0)
+    : [];
+  // Her own interests come first; the hobby is what she does, not what she reads about.
+  const topic = interests.length > 0 ? pick(rnd, interests) : hobby;
   const templates = [
+    `${topic} 入门 看什么`,
+    `${topic} 最近 有什么值得看的`,
+    `${city} ${topic} 好去处`,
     `${hobby} 新手 要注意什么`,
     `${city} 周末 适合一个人去的地方`,
-    `${hobby} 入门 需要买什么`,
-    `${city} 最近 有什么展览`,
-    `${hobby} 怎么坚持下来`,
   ];
   return pick(rnd, templates);
 }
@@ -745,6 +777,11 @@ const SOCIAL_TEMPLATES = [
   ['social', '给{person}打了半小时电话'],
   ['good', '收到{person}寄来的东西'],
 ];
+const INTEREST_TEMPLATES = [
+  ['rest', '翻了一晚上{interest}的东西'],
+  ['good', '在{interest}上有点小发现'],
+  ['rest', '看了半篇讲{interest}的长文，没看完'],
+];
 
 function generateWeek(seed, week, view, cap) {
   if (cap <= 0) return [];
@@ -755,19 +792,28 @@ function generateWeek(seed, week, view, cap) {
     ...LIFE_TEMPLATES.any,
     ...LOCAL_TEMPLATES,
     ...SOCIAL_TEMPLATES,
+    ...INTEREST_TEMPLATES,
   ];
   const relations = Array.isArray(view?.relations) ? view.relations.filter((relation) => relation?.name) : [];
   const closeRelations = relations.filter((relation) => ['friend', 'partner', 'family'].includes(relation.kind));
+  const interests = Array.isArray(view?.interests)
+    ? view.interests.filter((interest) => typeof interest === 'string' && interest.length > 0)
+    : [];
 
   const nextPerson = () => {
     const source = closeRelations.length > 0 ? closeRelations : relations;
     if (source.length === 0) return '一个朋友';
     return source[Math.min(source.length - 1, Math.floor(rnd() * source.length))].name;
   };
+  const nextInterest = () => {
+    if (interests.length === 0) return view?.hobby ?? '一些旧东西';
+    return interests[Math.min(interests.length - 1, Math.floor(rnd() * interests.length))];
+  };
   const fill = (text) =>
     text
       .replace('{city}', () => view?.currentCity ?? view?.birthCity ?? '这座城')
-      .replace('{person}', () => nextPerson());
+      .replace('{person}', () => nextPerson())
+      .replace('{interest}', () => nextInterest());
 
   const out = [];
   for (let slot = 0; slot < count; slot += 1) {
@@ -885,10 +931,18 @@ function isNoteRecord(value) {
   return true;
 }
 
+/**
+ * A flag is a small marker bag: primitives only, no nesting. Deliberately permissive
+ * about which keys exist — the write path validates before storing, and an unknown key
+ * must never be able to make the whole domain fail to open.
+ */
 function isFlagRecord(value) {
   if (!isPlainObject(value)) return false;
-  if (typeof value.at !== 'number' || !Number.isFinite(value.at)) return false;
-  if (value.reason !== undefined && typeof value.reason !== 'string') return false;
+  for (const key of Object.keys(value)) {
+    const field = value[key];
+    const primitive = typeof field === 'string' || typeof field === 'number' || typeof field === 'boolean' || field === null;
+    if (!primitive) return false;
+  }
   return true;
 }
 
@@ -1005,6 +1059,7 @@ export function fold(records, cfg, now) {
     birthCity: base.birthCity,
     currentCity,
     relations: base.relations,
+    interests: base.interests,
     lifeHistory,
     home: places.home,
     work: places.work,
