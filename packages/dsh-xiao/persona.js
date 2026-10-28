@@ -371,6 +371,20 @@ function relationForNow(relation, jobChosen) {
 }
 
 /**
+ * The flat was chosen when she was born; twenty years later it may no longer be true that
+ * she shares it. Only the detail is replaced, deterministically, so the address stays put.
+ * @param {object} home - the derived home.
+ * @param {number} age - her age now.
+ * @returns {object} the home as it should read now.
+ */
+function homeFor(home, age) {
+  if (!home || age < 40 || !String(home.detail).includes('合租')) return home;
+  const pool = HOME_DETAIL.filter((detail) => !detail.includes('合租'));
+  const index = Math.abs(hashString(String(home.city))) % pool.length;
+  return { ...home, detail: pool[index] };
+}
+
+/**
  * How long they have been together keeps growing, so the sentence has to keep up: a couple
  * described as 刚搬到一起住 three years in would still say it at four.
  * @param {object} relation - the derived partner relation.
@@ -1726,7 +1740,7 @@ export function fold(records, cfg, now) {
     }),
     interests: base.interests,
     lifeHistory,
-    home: places.home,
+    home: homeFor(places.home, age),
     work: places.work,
     commute: places.commute,
     nearby: [...new Set([...places.nearby, ...nearbyAdditions])].slice(0, 12),

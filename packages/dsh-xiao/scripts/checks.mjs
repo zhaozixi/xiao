@@ -32,10 +32,18 @@ export function makeChecks({ now }) {
   return [
     {
       name: 'age matches the birth date',
-      run(view) {
+      run(view, ctx) {
         // Aging stops at the ceiling by design, so a 60-year-old stays 60 while the
         // calendar moves on; that is the one place the two are allowed to disagree.
         if (view.age >= AGE_MAX) return null;
+        // A birth in the future is out of contract (a skewed clock wrote it), and her clock
+        // then runs from that anchor, so comparing against today says nothing.
+        const born = ctx?.birth?.data?.birthAt ?? ctx?.birth?.at;
+        if (Number.isFinite(born) && born > now) return null;
+        // With a growth rate other than 1/12 her clock deliberately runs faster than the
+        // calendar, so the two are expected to diverge.
+        const growth = ctx?.cfg?.growthPerMonth;
+        if (Number.isFinite(growth) && Math.abs(growth - 1 / 12) > 1e-9) return null;
         const [year, month, day] = view.birthDate.split('-').map(Number);
         const thisYear = new Date(now).getFullYear();
         const birthday = new Date(thisYear, month - 1, day).getTime();
@@ -158,9 +166,13 @@ export function makeChecks({ now }) {
     },
     {
       name: 'the card stays inside every budget',
-      run(view) {
+      run(view, ctx) {
+        const cfg = ctx?.cfg ?? {};
+        // A card budget of 0 means "do not inject a card at all", so there is nothing to
+        // check against a budget.
+        if (cfg.cardMaxChars === 0) return null;
         for (const budget of [60, 120, 220]) {
-          const card = renderCard(view, { cardMaxChars: budget });
+          const card = renderCard(view, { ...cfg, cardMaxChars: budget });
           if (card.length > budget) return `budget ${budget} produced ${card.length}`;
           if (!card.includes('虚拟角色')) return `disclaimer missing at budget ${budget}`;
         }

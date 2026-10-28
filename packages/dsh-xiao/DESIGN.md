@@ -574,7 +574,8 @@ node bench/report.mjs
 **重置模拟**：两个脚本，共用 `scripts/checks.mjs` 里的规则。
 
 - `node scripts/simulate-resets.mjs 50`：随机种子跑 N 次「出生 → fold」，覆盖数量。
-- `node scripts/simulate-coverage.mjs`：**状态全覆盖**——5 种职业 × 搬家/未搬家 × 2 个种子 = 20 个场景，每个走「刚出生 → 选定职业 → 搬到另一个城市」三个阶段。
+- `node scripts/simulate-coverage.mjs`：**状态全覆盖**——5 种职业 × 搬家/未搬家 × 2 个种子 = 20 个场景，每个走「刚出生 → 选定职业 → 搬到另一个城市」三个阶段；另加 10 条记忆链（记住/检索/存疑/遗忘/过期）与 10 条时间链（年龄更正 → 一年后）。
+- `node scripts/simulate-matrix.mjs`：**配置、损坏与跨度**——10 种配置（关卡片、关生活事件、成长 1/4、职业随种子、临时事实不淡出…）各跑一遍检查；12 种损坏日志（没有 seed、data 为 null、重复 seq、墓碑指向不存在的事实…）只要求 fold 不抛错并能降级；同一人格在当天/一天/一月/一年/五年/二十年后分别检查，并做一次 JSON 往返比对。
 
 两者都在发现问题时返回非零，可以直接当提交闸门。
 
