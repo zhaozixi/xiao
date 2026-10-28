@@ -5,7 +5,7 @@
  * Every entry here traces back to a real bug found in a real reset; a check that cannot be
  * traced to one should not be added, or the suite fills up with rules nobody needs.
  */
-import { AGE_MAX, CATALOG, deriveDay, looksTraditional, researchQuery, renderCard } from '../persona.js';
+import { AGE_MAX, CATALOG, deriveDay, looksTraditional, planUpdate, researchQuery, renderCard } from '../persona.js';
 
 const DAY = 86_400_000;
 
@@ -210,6 +210,15 @@ export function makeChecks({ now }) {
         if (!query) return 'empty query';
         if (looksTraditional(query)) return `traditional: ${query}`;
         return null;
+      },
+    },
+    {
+      name: 'a young persona cannot retire',
+      run(view) {
+        if (view.jobChosen || view.age >= 55) return null;
+        // The first choice is free of the state machine, but not of the age rule.
+        const planned = planUpdate({ action: 'set_job', job: '退休了', category: 'retired' }, view, []);
+        return planned.ok ? `a ${view.age}-year-old was allowed to retire` : null;
       },
     },
   ];

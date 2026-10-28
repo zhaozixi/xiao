@@ -76,6 +76,14 @@ test('the first job choice is free, later changes are not', () => {
   const bogus = planUpdate({ action: 'set_job', job: '在书店做店员', category: 'astronaut' }, undecided);
   assert.equal(bogus.ok, false);
   assert.equal(bogus.code, 'unknown_category');
+
+  // "Free" is not "unconstrained": a 23-year-old cannot decide to be retired.
+  const young = { ...undecided, age: 23 };
+  const retired = planUpdate({ action: 'set_job', job: '退休了', category: 'retired' }, young);
+  assert.equal(retired.ok, false);
+  assert.equal(retired.code, 'retire_too_young');
+  const old = { ...undecided, age: 58 };
+  assert.equal(planUpdate({ action: 'set_job', job: '退休了', category: 'retired' }, old).ok, true);
 });
 
 test('remember refuses empty and oversized text', () => {

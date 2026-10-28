@@ -622,12 +622,18 @@ export function planUpdate(input, view, records = []) {
     if (job.length === 0) return { ok: false, code: 'missing_job', reason: 'job 不能为空' };
     if (job.length > 40) return { ok: false, code: 'job_too_long', reason: 'job 超过 40 字' };
     // The very first choice is free: she is picking who she is, not moving between jobs.
-    // Every later change has to obey the state machine.
+    // Every later change has to obey the state machine. Free does not mean unconstrained
+    // though — "retired" is still not something a 23-year-old can decide to be.
     if (view.jobChosen !== false) {
       const check = canTransitionJob(view.jobCategory, category, view.age);
       if (!check.ok) return check;
-    } else if (!JOB_CATEGORIES.includes(category)) {
-      return { ok: false, code: 'unknown_category', reason: `未知 category：${category}` };
+    } else {
+      if (!JOB_CATEGORIES.includes(category)) {
+        return { ok: false, code: 'unknown_category', reason: `未知 category：${category}` };
+      }
+      if (category === 'retired' && view.age < RETIRE_AGE) {
+        return { ok: false, code: 'retire_too_young', reason: `退休需要 ${RETIRE_AGE} 岁以上，她现在 ${view.age} 岁` };
+      }
     }
     return { ok: true, kind: 'job', data: { job, category }, source: 'model' };
   }
@@ -724,8 +730,15 @@ export function renderCard(view, cfg) {
   const recent = view.recent && view.recent.length > 0 ? `最近：${view.recent[0]}。` : '';
   const social = socialLine(view);
 
-  // The disclaimer is the one line that must survive; everything else yields to it.
-  if (head.length + disclaimer.length + 1 > budget) return head.slice(0, budget);
+  // The disclaimer is the one line that must survive; everything else yields to it. When
+  // even the head does not fit beside it, the head is cut — never the other way round.
+  // (A 40-character job label is allowed, so this is reachable.)
+  if (head.length + disclaimer.length + 1 > budget) {
+    // A truncated disclaimer is not a disclaimer, so below its own length the head wins.
+    if (budget <= disclaimer.length) return head.slice(0, budget);
+    const room = Math.max(0, budget - disclaimer.length - 1);
+    return room === 0 ? disclaimer : `${head.slice(0, room)}\n${disclaimer}`;
+  }
 
   const lines = [head];
   let used = head.length;
