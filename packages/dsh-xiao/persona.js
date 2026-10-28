@@ -371,6 +371,26 @@ function relationForNow(relation, jobChosen) {
 }
 
 /**
+ * How long they have been together keeps growing, so the sentence has to keep up: a couple
+ * described as 刚搬到一起住 three years in would still say it at four.
+ * @param {object} relation - the derived partner relation.
+ * @param {number} together - years together right now.
+ * @param {boolean} hasChild - whether a child exists (rules out "just moved in").
+ * @returns {object} the relation with a sentence that fits.
+ */
+function partnerRelationFor(relation, together, hasChild) {
+  if (!relation || !Number.isFinite(together)) return relation;
+  const spelled = PARTNER_SPELLED[together] ?? `${together} 年`;
+  const shortPool = [`在一起${spelled}了`, ...PARTNER_DETAIL_SHORT];
+  const pool = (together <= 3 ? shortPool : PARTNER_DETAIL_LONG).filter(
+    (detail) => !(hasChild && detail === '刚搬到一起住'),
+  );
+  if (pool.length === 0 || pool.includes(relation.detail)) return relation;
+  const index = Math.abs(hashString(String(relation.name ?? relation.id))) % pool.length;
+  return { ...relation, detail: pool[index] };
+}
+
+/**
  * The child's sentence has to keep matching the child as she grows: a 13-year-old cannot
  * still be 上小学二年级 just because she was 12 when the persona was derived.
  * @param {object} relation - the derived child relation.
@@ -1695,7 +1715,12 @@ export function fold(records, cfg, now) {
     birthCity: base.birthCity,
     currentCity,
     relations: base.relations.map((relation) => {
-      if (relation.kind === 'child') return childRelationFor(relation, age - (base.family?.childBornAt ?? age));
+      const childAge = age - (base.family?.childBornAt ?? age);
+      if (relation.kind === 'child') return childRelationFor(relation, childAge);
+      if (relation.kind === 'partner') {
+        const together = age - (base.family?.partnerAge ?? age);
+        return partnerRelationFor(relation, together, base.family?.childBornAt !== undefined);
+      }
       if (relation.kind === 'family') return parentRelationFor(relation, currentCity !== base.birthCity);
       return relationForNow(relation, jobChosen);
     }),
