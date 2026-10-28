@@ -43,11 +43,12 @@ window.__ModuleLoader__.load({
         note: '这里只读。改状态要通过对话里的 xiao_update 工具。',
         resetOpen: '重置晓…',
         resetWarning:
-          '这会清空全部事实、她记住的事和「已见面」标记，然后重新随机性别、年龄、职业、性格。不可撤销。已经说过的对话不会被删除。',
+          '这会清空全部事实、她记住的事和「已见面」标记，然后重新随机性别、年龄、职业、性格。不可撤销。已经说过的对话不会被删除。现在什么都还没发生——要真的重置，请点下面的「确认重置」。',
         resetConfirm: '确认重置',
         resetCancel: '取消',
         resetWorking: '重置中…',
         resetDone: '已重置，新的晓已经出现。',
+        resetAgain: '再重置一次',
         resetFailed: '重置失败',
         fields: {
           gender: '性别',
@@ -145,6 +146,7 @@ window.__ModuleLoader__.load({
         resetCancel: 'Cancel',
         resetWorking: 'Resetting…',
         resetDone: 'Reset done. A new 晓 is here.',
+        resetAgain: 'Reset again',
         resetFailed: 'Reset failed',
         fields: {
           gender: 'Gender',
@@ -1052,8 +1054,13 @@ window.__ModuleLoader__.load({
         return h('div', { style: { marginTop: 20, paddingTop: 14, borderTop: `1px solid ${C.line}`, color: C.dim, fontSize: 12 } }, dict.resetWorking);
       }
       if (stage === 'done') {
-        return h('div', { style: { marginTop: 20, paddingTop: 14, borderTop: `1px solid ${C.line}`, color: C.text, fontSize: 12 } },
-          `${dict.resetDone}${detail ? `（${detail}）` : ''}`);
+        return h('div', { style: { marginTop: 20, paddingTop: 14, borderTop: `1px solid ${C.line}` } },
+          h('div', { style: { color: C.text, fontSize: 12 } }, `${dict.resetDone}${detail ? `（${detail}）` : ''}`),
+          // Without this the block stays in "done" forever and there is no button left,
+          // which looks exactly like a reset that stopped working.
+          h('div', { style: { marginTop: 10 } },
+            h('button', { type: 'button', onClick: () => setStage('idle'), style: outline }, dict.resetAgain)),
+        );
       }
       return h('div', { style: { marginTop: 20, paddingTop: 14, borderTop: `1px solid ${C.line}`, color: C.error, fontSize: 12 } },
         `${dict.resetFailed}：${detail}`);
