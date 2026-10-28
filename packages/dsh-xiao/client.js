@@ -63,6 +63,7 @@ window.__ModuleLoader__.load({
           birthCity: '出生地',
         },
         relations: '身边的人',
+        history: '大事记',
         kinds: {
           birth: '出生',
           override: '更正',
@@ -144,6 +145,7 @@ window.__ModuleLoader__.load({
           birthCity: 'Birthplace',
         },
         relations: 'People around her',
+        history: 'Life so far',
         kinds: {
           birth: 'birth',
           override: 'correction',
@@ -814,6 +816,21 @@ window.__ModuleLoader__.load({
               ),
             )
           : h('div', { key: 'relations-empty', style: { color: C.dim, fontSize: 13 } }, '—'),
+        heading('h-history', dict.history),
+        Array.isArray(value.lifeHistory) && value.lifeHistory.length > 0
+          ? h(
+              'ul',
+              { key: 'history', style: { margin: '2px 0 0', paddingLeft: 18, fontSize: 13, lineHeight: 1.75, color: C.text } },
+              value.lifeHistory.map((milestone, index) =>
+                h(
+                  'li',
+                  { key: `${milestone.date}-${index}` },
+                  h('span', { style: { color: C.dim, fontSize: 12, marginRight: 8 } }, milestone.date),
+                  milestone.text,
+                ),
+              ),
+            )
+          : h('div', { key: 'history-empty', style: { color: C.dim, fontSize: 13 } }, '—'),
         heading('h-traits', dict.traits),
         row('outlook', dict.fields.outlook, traits.outlook ?? '—'),
         row('curiosity', dict.fields.curiosity, traits.curiosity ?? '—'),

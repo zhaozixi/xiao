@@ -582,6 +582,7 @@ export function apply(ctx, config) {
           jobCategory: view.jobCategory,
         },
         relations: view.relations,
+        lifeHistory: view.lifeHistory,
         traits: {
           outlook: view.outlook,
           curiosity: view.curiosity,

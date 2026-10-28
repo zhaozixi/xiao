@@ -17,16 +17,38 @@ function birth(seed, at = START) {
   };
 }
 
-test('a persona is born somewhere, on some date, with people around her', () => {
+test('a persona is born somewhere, on some date, with parents', () => {
   const persona = derivePersona('social-seed-1');
   assert.ok(typeof persona.birthCity === 'string' && persona.birthCity.length > 0);
   assert.ok(persona.birthMonth >= 1 && persona.birthMonth <= 12);
   assert.ok(persona.birthDay >= 1 && persona.birthDay <= 28);
-  assert.equal(persona.relations.length, 3);
+  const ids = persona.relations.map((relation) => relation.id);
+  assert.ok(ids.includes('mother'), 'a mother is mandatory');
+  assert.ok(ids.includes('father'), 'a father is mandatory');
+  assert.ok(ids.length >= 4, 'parents, a friend, and someone from school or work');
   for (const relation of persona.relations) {
     assert.ok(relation.name && relation.role && relation.detail);
-    assert.ok(['family', 'friend', 'classmate', 'work'].includes(relation.kind));
+    assert.ok(['family', 'friend', 'classmate', 'work', 'partner', 'child'].includes(relation.kind));
   }
+});
+
+test('a partner and a child are plausible but never mandatory', () => {
+  let withPartner = 0;
+  for (let index = 0; index < 60; index += 1) {
+    const persona = derivePersona(`partner-seed-${index}`);
+    const ids = persona.relations.map((relation) => relation.id);
+    const hasPartner = ids.includes('partner');
+    const hasChild = ids.includes('child');
+    if (hasPartner) {
+      withPartner += 1;
+      assert.ok(persona.age >= 25, 'a partner only appears for adults');
+    }
+    if (hasChild) {
+      assert.ok(hasPartner, 'a child implies a partner');
+      assert.ok(persona.age >= 32, 'a child only appears for older adults');
+    }
+  }
+  assert.ok(withPartner > 0 && withPartner < 60, 'some personas have a partner, not all');
 });
 
 test('relations are deterministic and never share a name', () => {
@@ -35,6 +57,32 @@ test('relations are deterministic and never share a name', () => {
   assert.deepEqual(a.relations, b.relations);
   const names = a.relations.map((relation) => relation.name);
   assert.equal(new Set(names).size, names.length);
+});
+
+test('the life history runs from birth to now, in order', () => {
+  const view = fold([birth('social-seed-11')], { growthPerMonth: 1 / 12 }, START);
+  const history = view.lifeHistory;
+  assert.ok(history.length >= 5, `expected a timeline, got ${history.length}`);
+  assert.equal(history[0].text, `出生在${view.birthCity}`);
+  assert.equal(history[0].date, view.birthDate);
+  for (let index = 1; index < history.length; index += 1) {
+    assert.ok(history[index].date > history[index - 1].date, 'milestones must be ordered');
+    assert.ok(history[index].age > history[index - 1].age);
+  }
+  assert.ok(history[history.length - 1].age <= view.age, 'nothing may happen after her current age');
+});
+
+test('the life history is stable across time and different for different seeds', () => {
+  const a = fold([birth('social-seed-12')], { growthPerMonth: 1 / 12 }, START);
+  const aLater = fold([birth('social-seed-12')], { growthPerMonth: 1 / 12 }, START + 2 * YEAR);
+  const kept = a.lifeHistory.filter((milestone) => milestone.age <= aLater.age);
+  assert.deepEqual(kept, aLater.lifeHistory.slice(0, kept.length));
+
+  const b = fold([birth('social-seed-13')], { growthPerMonth: 1 / 12 }, START);
+  assert.notDeepEqual(
+    a.lifeHistory.map((milestone) => milestone.text),
+    b.lifeHistory.map((milestone) => milestone.text),
+  );
 });
 
 test('a student gets a classmate instead of a colleague', () => {

@@ -96,54 +96,107 @@ const BIRTH_CITIES = [
 ];
 
 const SURNAMES = ['张', '王', '李', '陈', '刘', '周', '吴', '徐', '孙', '马', '朱', '胡', '林', '何', '郭', '高'];
-const GIVEN = ['宁', '航', '婧', '磊', '楠', '婷', '阳', '帆', '悦', '鹏', '若', '嘉', '川', '岑', '沐', '岚'];
+const GIVEN_FEMALE = ['婧', '婷', '悦', '楠', '若', '岚', '敏', '嘉'];
+const GIVEN_MALE = ['航', '磊', '阳', '帆', '鹏', '川', '岑', '斌'];
 
-const FAMILY_ROLES = ['母亲', '父亲', '姐姐', '哥哥', '妹妹', '弟弟'];
-const FAMILY_DETAIL = [
-  '在老家，每周通一次电话',
-  '同城，偶尔过来吃饭',
-  '在外地，逢年过节才见',
-  '总担心她的工作不稳定',
-];
+const PARENT_DETAIL = ['在老家，每周通一次电话', '同城，偶尔过来吃饭', '总担心她的工作不稳定', '身体还好，就是嘴上不饶人'];
 const FRIEND_ROLES = ['大学同学', '高中同学', '发小', '老邻居'];
 const FRIEND_DETAIL = ['常一起散步', '很久没联系了', '偶尔约着吃饭', '会互相吐槽工作'];
 const WORK_ROLES = ['同事', '前同事', '合作过的编辑', '常约稿的甲方'];
 const WORK_DETAIL = ['工作室的搭档', '偶尔一起接活', '上次合作之后就没再聊过'];
 const CLASS_ROLES = ['同班同学', '同宿舍的室友', '一起赶作业的朋友'];
 const CLASS_DETAIL = ['经常一起去图书馆', '这学期见面少了', '上次小组作业一起熬到很晚'];
+const PARTNER_DETAIL = ['在一起三年了', '刚搬到一起住', '总提醒她按时吃饭'];
+const CHILD_DETAIL = ['刚上幼儿园', '上小学二年级', '在老家由父母带着'];
 
 /**
- * A tiny cast: one family member, one friend, and one person from school or work —
- * enough for the character to have someone to mention, and small enough to stay honest.
+ * The cast. Parents always exist; a partner and a child exist only when the seed says
+ * so — they are plausible, not mandatory.
  * @param {Function} rnd - seeded generator, shared with the rest of the persona.
  * @param {string} jobCategory - the category chosen at birth.
+ * @param {number} age - the age at birth.
  * @returns {object[]} relations.
  */
-function deriveRelations(rnd, jobCategory) {
+function deriveRelations(rnd, jobCategory, age) {
   const used = new Set();
-  const nextName = () => {
+  const nextFrom = (pool) => {
     for (let attempt = 0; attempt < 8; attempt += 1) {
-      const name = `${pick(rnd, SURNAMES)}${pick(rnd, GIVEN)}`;
+      const name = `${pick(rnd, SURNAMES)}${pick(rnd, pool)}`;
       if (!used.has(name)) {
         used.add(name);
         return name;
       }
     }
-    const fallback = `${pick(rnd, SURNAMES)}${pick(rnd, GIVEN)}${used.size}`;
+    const fallback = `${pick(rnd, SURNAMES)}${pick(rnd, pool)}${used.size}`;
     used.add(fallback);
     return fallback;
   };
+  const anyName = () => nextFrom(rnd() < 0.5 ? GIVEN_FEMALE : GIVEN_MALE);
 
   const relations = [
-    { id: 'family', kind: 'family', role: pick(rnd, FAMILY_ROLES), name: nextName(), detail: pick(rnd, FAMILY_DETAIL) },
-    { id: 'friend', kind: 'friend', role: pick(rnd, FRIEND_ROLES), name: nextName(), detail: pick(rnd, FRIEND_DETAIL) },
+    { id: 'mother', kind: 'family', role: '母亲', name: nextFrom(GIVEN_FEMALE), detail: pick(rnd, PARENT_DETAIL) },
+    { id: 'father', kind: 'family', role: '父亲', name: nextFrom(GIVEN_MALE), detail: pick(rnd, PARENT_DETAIL) },
+    { id: 'friend', kind: 'friend', role: pick(rnd, FRIEND_ROLES), name: anyName(), detail: pick(rnd, FRIEND_DETAIL) },
   ];
   if (jobCategory === 'student') {
-    relations.push({ id: 'classmate', kind: 'classmate', role: pick(rnd, CLASS_ROLES), name: nextName(), detail: pick(rnd, CLASS_DETAIL) });
+    relations.push({ id: 'classmate', kind: 'classmate', role: pick(rnd, CLASS_ROLES), name: anyName(), detail: pick(rnd, CLASS_DETAIL) });
   } else {
-    relations.push({ id: 'work', kind: 'work', role: pick(rnd, WORK_ROLES), name: nextName(), detail: pick(rnd, WORK_DETAIL) });
+    relations.push({ id: 'work', kind: 'work', role: pick(rnd, WORK_ROLES), name: anyName(), detail: pick(rnd, WORK_DETAIL) });
+  }
+
+  const hasPartner = age >= 25 && rnd() < 0.45;
+  if (hasPartner) {
+    relations.push({ id: 'partner', kind: 'partner', role: '伴侣', name: anyName(), detail: pick(rnd, PARTNER_DETAIL) });
+    if (age >= 32 && rnd() < 0.4) {
+      const girl = rnd() < 0.5;
+      relations.push({
+        id: 'child',
+        kind: 'child',
+        role: girl ? '女儿' : '儿子',
+        name: nextFrom(girl ? GIVEN_FEMALE : GIVEN_MALE),
+        detail: pick(rnd, CHILD_DETAIL),
+      });
+    }
   }
   return relations;
+}
+
+/**
+ * The short history of a made-up life: birth, school, work. Anchored to her birth date,
+ * so it reads as a timeline rather than a list of years.
+ * @param {string} seed - instance seed.
+ * @param {string} birthDate - `YYYY-MM-DD`.
+ * @param {string} birthCity - place of birth.
+ * @param {number} age - current age; nothing after it is emitted.
+ * @returns {object[]} milestones, oldest first.
+ */
+export function deriveLifeHistory(seed, birthDate, birthCity, age) {
+  const [year, month, day] = String(birthDate).split('-').map(Number);
+  if (![year, month, day].every(Number.isFinite)) return [];
+  const rnd = mulberry32(hashString(`${seed}#history`));
+  const stamp = (offset) =>
+    `${String(year + offset).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+
+  const out = [];
+  const add = (offset, text) => {
+    if (offset <= age) out.push({ date: stamp(offset), age: offset, text });
+  };
+
+  add(0, `出生在${birthCity}`);
+  add(6, '上小学');
+  add(12, '上初中');
+  add(15, '上高中');
+  const wentToCollege = rnd() < 0.7;
+  if (wentToCollege) {
+    add(18, '上大学');
+    add(22, '大学毕业');
+    add(23, '第一份工作');
+  } else {
+    add(18, '高中毕业，开始工作');
+    add(19, '第一份工作');
+  }
+  if (age >= 27) add(26, '换了一次工作');
+  return out;
 }
 
 /**
@@ -177,7 +230,7 @@ export function derivePersona(seed) {
     birthMonth: 1 + Math.floor(rnd() * 12),
     birthDay: 1 + Math.floor(rnd() * 28),
     birthCity: pick(rnd, BIRTH_CITIES),
-    relations: deriveRelations(rnd, chosen.category),
+    relations: deriveRelations(rnd, chosen.category, age),
   };
 }
 
@@ -682,6 +735,7 @@ export function fold(records, cfg, now) {
   const anchorAt = ageCorrection ? ageCorrection.at : birthAt;
   const anchorAge = ageCorrection ? ageCorrection.value : base.age;
   const birthDate = birthDateString(anchorAt, anchorAge, base.birthMonth, base.birthDay);
+  const lifeHistory = deriveLifeHistory(birth.data.seed, birthDate, base.birthCity, age);
 
   return {
     instanceId: birth.data.instanceId,
@@ -696,6 +750,7 @@ export function fold(records, cfg, now) {
     birthDay: base.birthDay,
     birthCity: base.birthCity,
     relations: base.relations,
+    lifeHistory,
     job: overrides.has('job') ? String(overrides.get('job')) : job,
     jobCategory,
     outlook: base.outlook,
