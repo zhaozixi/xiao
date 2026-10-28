@@ -571,6 +571,8 @@ node bench/report.mjs
 
 **池子清单**由 `node scripts/catalog.mjs --write` 生成（由 Node 直接写 UTF-8；不要用 shell 重定向——PowerShell 的 `>` 会写成 UTF-16），与代码同源，不会走样。
 
+**重置模拟**：`node scripts/simulate-resets.mjs 50` 用随机种子跑 N 次「出生 → fold」，对每个实例执行 15 条一致性检查（年龄 vs 出生日期、父母 vs 搬家、同事 vs 是否有工作、伴侣时长、孩子年龄、合租、时间线顺序、卡片预算、未定职业的日程、调研问题的用字、一个月后再 fold 等）。有问题时返回非零，可以直接当提交闸门。
+
 ---
 
 ## 15. 演进史
