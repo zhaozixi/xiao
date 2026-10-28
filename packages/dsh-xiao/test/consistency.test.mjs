@@ -99,6 +99,33 @@ test('a short gap only pins the missing days', () => {
 });
 
 // ---------------------------------------------------------------------------
+// The cast has to match the present
+// ---------------------------------------------------------------------------
+
+test('a colleague only exists while she has a job', () => {
+  const undecided = fold([birth('jobless-1')], {}, NOW);
+  const past = undecided.relations.find((relation) => relation.kind === 'work');
+  if (past) {
+    assert.equal(past.role, '前同事', 'before she picks a job, the person is a former colleague');
+    assert.ok(!past.detail.includes('工位'), past.detail);
+    assert.ok(!past.detail.includes('同一个组'), past.detail);
+  }
+
+  const hired = {
+    seq: 2,
+    at: BORN + 1,
+    kind: 'job',
+    data: { job: '在书店做店员', category: 'employed' },
+    source: 'model',
+    evidence: 'confirmed',
+  };
+  const working = fold([birth('jobless-1'), hired], {}, NOW);
+  const now = working.relations.find((relation) => relation.kind === 'work');
+  assert.ok(now, 'with a job the colleague is back');
+  assert.ok(['同事', '前同事'].includes(now.role), now.role);
+});
+
+// ---------------------------------------------------------------------------
 // Moving is a physical event, not just a label
 // ---------------------------------------------------------------------------
 

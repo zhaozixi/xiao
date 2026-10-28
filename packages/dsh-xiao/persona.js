@@ -288,6 +288,24 @@ function deriveRelations(rnd, jobCategory, age, shape = {}) {
 }
 
 /**
+ * A colleague is only a colleague while she has a job. Before she has chosen one, the
+ * same person is someone she used to work with — her timeline still has past jobs, so the
+ * relationship is real, only the label has to match the present.
+ * @param {object} relation - a derived relation.
+ * @param {boolean} jobChosen - whether she has a job fact.
+ * @returns {object} the relation as it should read today.
+ */
+function relationForNow(relation, jobChosen) {
+  if (jobChosen || relation?.kind !== 'work') return relation;
+  const presentTense = new Set(['同一个组，午饭常一起吃', '工位在隔壁，交接班时会聊两句']);
+  return {
+    ...relation,
+    role: '前同事',
+    detail: presentTense.has(relation.detail) ? '偶尔下班一起走一段' : relation.detail,
+  };
+}
+
+/**
  * The short history of a made-up life: birth, school, work. Anchored to her birth date,
  * so it reads as a timeline rather than a list of years.
  * @param {string} seed - instance seed.
@@ -1577,7 +1595,7 @@ export function fold(records, cfg, now) {
     birthDay: base.birthDay,
     birthCity: base.birthCity,
     currentCity,
-    relations: base.relations,
+    relations: base.relations.map((relation) => relationForNow(relation, jobChosen)),
     interests: base.interests,
     lifeHistory,
     home: places.home,
