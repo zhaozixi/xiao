@@ -35,6 +35,7 @@ window.__ModuleLoader__.load({
         loadOlder: '加载更早',
         loadingOlder: '加载中…',
         allDays: '全部',
+        searchPlaceholder: '搜索事实内容…',
         guardRejected: '守卫拦截',
         toolRejected: '工具拒绝',
         born: '出生于',
@@ -112,6 +113,7 @@ window.__ModuleLoader__.load({
         loadOlder: 'Load older',
         loadingOlder: 'Loading…',
         allDays: 'All',
+        searchPlaceholder: 'Search facts…',
         guardRejected: 'blocked by guard',
         toolRejected: 'refused by tool',
         born: 'Born',
@@ -272,6 +274,27 @@ window.__ModuleLoader__.load({
     }
 
     const DAY_MS = 86_400_000;
+    const PREFS_KEY = 'dsh-xiao.timeline';
+
+    /** The page remembers what you were looking at, for this browser session only. */
+    function readPrefs() {
+      try {
+        if (typeof sessionStorage === 'undefined') return {};
+        const raw = sessionStorage.getItem(PREFS_KEY);
+        return raw ? JSON.parse(raw) ?? {} : {};
+      } catch (error) {
+        return {};
+      }
+    }
+
+    function writePrefs(prefs) {
+      try {
+        if (typeof sessionStorage === 'undefined') return;
+        sessionStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+      } catch (error) {
+        /* storage is best-effort */
+      }
+    }
 
     function startOfDay(ms) {
       const date = new Date(ms);
@@ -484,8 +507,16 @@ window.__ModuleLoader__.load({
       const { state, reload } = useFeed('api/xiao.state');
       const [older, setOlder] = React.useState([]);
       const [loadingOlder, setLoadingOlder] = React.useState(false);
-      const [hidden, setHidden] = React.useState(() => new Set(['rejected']));
-      const [dayFilter, setDayFilter] = React.useState(null);
+      const prefs = React.useMemo(readPrefs, []);
+      const [hidden, setHidden] = React.useState(
+        () => new Set(Array.isArray(prefs.hidden) ? prefs.hidden : ['rejected']),
+      );
+      const [dayFilter, setDayFilter] = React.useState(prefs.day ?? null);
+      const [search, setSearch] = React.useState(prefs.search ?? '');
+
+      React.useEffect(() => {
+        writePrefs({ hidden: [...hidden], day: dayFilter, search });
+      }, [hidden, dayFilter, search]);
 
       // A fresh read supersedes every older page that was loaded.
       const readRevision = state.status === 'ready' ? state.value : null;
@@ -546,9 +577,15 @@ window.__ModuleLoader__.load({
         }
         const days = [...dayCounts.keys()].sort().slice(-30);
 
+        const needle = search.trim().toLowerCase();
         const visible = facts
           .filter((fact) => !hidden.has(fact.kind))
           .filter((fact) => !dayFilter || dayKey(fact.at) === dayFilter)
+          .filter((fact) => {
+            if (!needle) return true;
+            const text = `${describe(fact, dict, bySeq)} ${dict.kinds[fact.kind] ?? fact.kind}`;
+            return text.toLowerCase().includes(needle);
+          })
           .slice()
           .reverse();
 
@@ -590,19 +627,36 @@ window.__ModuleLoader__.load({
             ),
           ),
           h('div', { style: { color: C.dim, fontSize: 12, marginBottom: 10 } }, dict.pageHint),
-          kinds.length > 1
-            ? h(
-                'div',
-                { style: { display: 'flex', flexWrap: 'wrap', gap: 6, margin: '0 0 8px' } },
-                kinds.map((kind) =>
+          h(
+            'div',
+            { style: { display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', margin: '0 0 8px' } },
+            h('input', {
+              type: 'search',
+              value: search,
+              onChange: (event) => setSearch(event.target.value),
+              placeholder: dict.searchPlaceholder,
+              'aria-label': dict.searchPlaceholder,
+              style: {
+                flex: '0 1 240px',
+                font: 'inherit',
+                fontSize: 12,
+                padding: '3px 8px',
+                borderRadius: 6,
+                border: `1px solid ${C.line}`,
+                background: 'transparent',
+                color: C.text,
+              },
+            }),
+            kinds.length > 1
+              ? kinds.map((kind) =>
                   h(
                     Chip,
                     { key: kind, active: !hidden.has(kind), onClick: () => toggleKind(kind) },
                     `${dict.kinds[kind] ?? kind} ${kindCounts.get(kind)}`,
                   ),
-                ),
-              )
-            : null,
+                )
+              : null,
+          ),
           days.length > 1
             ? h(
                 'div',

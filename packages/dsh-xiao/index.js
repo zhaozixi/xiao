@@ -27,6 +27,7 @@ import {
   planUpdate,
   renderCard,
   renderUserNotes,
+  suggestTransition,
 } from './persona.js';
 
 const DEFAULTS = {
@@ -375,7 +376,21 @@ export function apply(ctx, config) {
       }
 
       const days = Math.min(60, Math.max(1, Math.floor(Number(input.days ?? 7)) || 7));
-      const result = generateLife({ seed: view.seed, view, cfg, days, now: Date.now() });
+      let result = generateLife({ seed: view.seed, view, cfg, days, now: Date.now() });
+
+      // Once a day is over it is history: pin every event that is no longer today, so a
+      // later job change cannot rewrite the past. Today's events stay provisional.
+      const past = result.events.filter((event) => event.day < result.toDay && !event.committed);
+      if (past.length > 0) {
+        for (const event of past) {
+          await writeFact('event', { id: event.id, day: event.day, kind: event.kind, text: event.text }, 'sim', 'confirmed');
+          if (!frozen.includes(event.id)) frozen.push(event.id);
+        }
+        view = refresh() ?? view;
+        result = generateLife({ seed: view.seed, view, cfg, days, now: Date.now() });
+      }
+
+      const suggestion = suggestTransition(view, result.events);
       return {
         simulated: true,
         days,
@@ -384,9 +399,10 @@ export function apply(ctx, config) {
         tone: result.tone,
         events: result.events.map((event) => ({ ...event, simulated: true })),
         frozen,
+        ...(suggestion ? { suggestion } : {}),
         note:
           cfg.lifeEventsPerWeek > 0
-            ? '模拟内容，不是真实发生的事。未固化的事件下次可能不同；你亲口说过的事件用 speak 固化后不再变化。'
+            ? '模拟内容，不是真实发生的事。已经过去的日子会自动固化，不再变化；今天的事件在说出口之前还可能不同。'
             : '生活模拟已关闭（lifeEventsPerWeek=0），这里没有内容。',
       };
     },

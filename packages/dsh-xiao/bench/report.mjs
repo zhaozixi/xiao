@@ -23,6 +23,7 @@ import {
   planUpdate,
   renderCard,
   renderUserNotes,
+  suggestTransition,
 } from '../persona.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -190,6 +191,12 @@ function measureH3() {
   const block = renderUserNotes(remembered, { userSummaryMaxChars: 200 });
   record('H3', '记住的用户事实进入提示词', block.includes('住在杭州'), `${block.length} 字符`);
   record('H3', '忘记之后不再进入提示词', renderUserNotes(viewOf([base, noteFact, tombstone]), { userSummaryMaxChars: 200 }) === '');
+
+  // 10. life events can propose a transition without committing it
+  const seeking = { ...viewOf([base]), jobCategory: 'job_seeking' };
+  const proposed = suggestTransition(seeking, [{ id: '1.0', kind: 'work', text: '去面了一家小公司，聊了四十分钟' }]);
+  record('H3', '生活事件能提出职业建议', Boolean(proposed) && proposed.to === 'employed', proposed?.to);
+  record('H3', '建议不会改动状态', seeking.jobCategory === 'job_seeking');
 
   return {
     section: 'H3',

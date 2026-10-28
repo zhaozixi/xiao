@@ -263,6 +263,42 @@ export function renderCard(view, cfg) {
 }
 
 /**
+ * Propose a state change the character could plausibly make right now. Never commits
+ * anything: it only gives the conversation a reason and a concrete next step.
+ * @param {object} view - folded character view.
+ * @param {object[]} events - events in the window being discussed.
+ * @returns {object|undefined} a suggestion, or undefined when nothing is plausible.
+ */
+export function suggestTransition(view, events) {
+  const list = Array.isArray(events) ? events : [];
+  if (view?.jobCategory === 'job_seeking') {
+    const interview = list.find((event) => typeof event?.text === 'string' && /面试|面了/.test(event.text));
+    if (interview) {
+      return {
+        kind: 'job_transition',
+        from: 'job_seeking',
+        to: 'employed',
+        because: interview.text,
+        hint: '如果对话里聊到这次面试的结果，可以用 xiao_update 的 set_job 把职业改成 employed，job 自己拟一个具体的名字。',
+      };
+    }
+  }
+  if (view?.jobCategory === 'employed') {
+    const quitting = list.find((event) => typeof event?.text === 'string' && /离职|辞了|被裁/.test(event.text));
+    if (quitting) {
+      return {
+        kind: 'job_transition',
+        from: 'employed',
+        to: 'job_seeking',
+        because: quitting.text,
+        hint: '如果对话里聊到这件事，可以用 xiao_update 的 set_job 把职业改成 job_seeking。',
+      };
+    }
+  }
+  return undefined;
+}
+
+/**
  * Render what the character remembers about the user. Kept separate from the persona
  * card so the two budgets do not compete, and capped hard like the card.
  * @param {object} view - folded character view.
