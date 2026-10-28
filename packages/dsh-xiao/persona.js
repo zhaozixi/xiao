@@ -335,6 +335,24 @@ function deriveRelations(rnd, jobCategory, age, shape = {}) {
 }
 
 /**
+ * Parents are where she was born. If she later moves — by seed or by an explicit `move` —
+ * the sentence has to follow, or a daughter in 杭州 has parents "同城" in 苏州.
+ * @param {object} relation - a derived relation.
+ * @param {boolean} movedFromBirth - whether she lives somewhere other than her birth city.
+ * @returns {object} the relation as it should read today.
+ */
+function parentRelationFor(relation, movedFromBirth) {
+  if (!relation || relation.kind !== 'family') return relation;
+  if (movedFromBirth && relation.detail.startsWith('同城')) {
+    return { ...relation, detail: '在老家，每周通一次电话' };
+  }
+  if (!movedFromBirth && relation.detail.startsWith('在老家')) {
+    return { ...relation, detail: '同城，偶尔过来吃饭' };
+  }
+  return relation;
+}
+
+/**
  * A colleague is only a colleague while she has a job. Before she has chosen one, the
  * same person is someone she used to work with — her timeline still has past jobs, so the
  * relationship is real, only the label has to match the present.
@@ -1676,11 +1694,11 @@ export function fold(records, cfg, now) {
     birthDay: base.birthDay,
     birthCity: base.birthCity,
     currentCity,
-    relations: base.relations.map((relation) =>
-      relation.kind === 'child'
-        ? childRelationFor(relation, age - (base.family?.childBornAt ?? age))
-        : relationForNow(relation, jobChosen),
-    ),
+    relations: base.relations.map((relation) => {
+      if (relation.kind === 'child') return childRelationFor(relation, age - (base.family?.childBornAt ?? age));
+      if (relation.kind === 'family') return parentRelationFor(relation, currentCity !== base.birthCity);
+      return relationForNow(relation, jobChosen);
+    }),
     interests: base.interests,
     lifeHistory,
     home: places.home,

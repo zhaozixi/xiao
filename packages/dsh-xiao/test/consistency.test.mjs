@@ -102,6 +102,21 @@ test('a short gap only pins the missing days', () => {
 // The cast has to match the present
 // ---------------------------------------------------------------------------
 
+test('a move updates where the parents are', () => {
+  const stay = fold([birth('parents-1')], {}, NOW);
+  const stayDetail = stay.relations.find((relation) => relation.id === 'mother').detail;
+  const target = stay.birthCity === '苏州' ? '杭州' : '苏州';
+  const move = { seq: 2, at: BORN + 1, kind: 'override', data: { field: 'city', value: target }, source: 'user', evidence: 'confirmed' };
+  const moved = fold([birth('parents-1'), move], {}, NOW);
+  assert.equal(moved.currentCity, target);
+  for (const relation of moved.relations.filter((r) => r.kind === 'family')) {
+    assert.ok(!relation.detail.includes('同城'), `${relation.role}: ${relation.detail} after moving to ${target}`);
+  }
+  if (stayDetail.includes('同城')) {
+    assert.ok(!stay.relations.find((r) => r.id === 'mother').detail.includes('在老家'));
+  }
+});
+
 test('a colleague only exists while she has a job', () => {
   const undecided = fold([birth('jobless-1')], {}, NOW);
   const past = undecided.relations.find((relation) => relation.kind === 'work');
