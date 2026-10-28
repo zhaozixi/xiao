@@ -73,6 +73,28 @@ test('nobody over forty is sharing a flat with roommates', () => {
   assert.ok(checked > 5);
 });
 
+test('a child is described at the age the child actually is', () => {
+  let older = 0;
+  let younger = 0;
+  for (let index = 0; index < 300; index += 1) {
+    const persona = derivePersona(`child-age-seed-${index}`);
+    const child = persona.relations.find((relation) => relation.kind === 'child');
+    if (!child) continue;
+    if (persona.age >= 50) {
+      older += 1;
+      // A child born when she was 27–34 is a grown adult by the time she is 50.
+      assert.ok(!/幼儿园|小学|在老家由父母带着/.test(child.detail), `${persona.age}: ${child.detail}`);
+    }
+    if (persona.age < 46) {
+      younger += 1;
+      // Under 46 the child cannot yet be 19, so adult phrasing is impossible.
+      assert.ok(!/外地工作|过年才回来|偶尔打个电话/.test(child.detail), `${persona.age}: ${child.detail}`);
+    }
+  }
+  assert.ok(older > 3, `expected older parents, got ${older}`);
+  assert.ok(younger > 3, `expected younger parents, got ${younger}`);
+});
+
 test('a couple with a child never just moved in together', () => {
   let withChild = 0;
   for (let index = 0; index < 200; index += 1) {

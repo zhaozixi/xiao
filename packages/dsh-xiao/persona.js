@@ -147,7 +147,14 @@ const INTERESTS = [
 ];
 
 const PARTNER_DETAIL = ['在一起三年了', '刚搬到一起住', '总提醒按时吃饭'];
-const CHILD_DETAIL = ['在老家由父母带着', '照片里总是笑着的', '每个月见两三次'];
+/**
+ * How a child is described depends on how old the child is now. A 24-year-old daughter
+ * cannot be "在老家由父母带着"; that sentence describes a small child.
+ */
+const CHILD_DETAIL_YOUNG = ['在老家由父母带着', '刚上幼儿园', '照片里总是笑着的'];
+const CHILD_DETAIL_KID = ['在老家由父母带着', '上小学二年级', '照片里总是笑着的'];
+const CHILD_DETAIL_TEEN = ['在上中学', '不太爱说话', '周末才回家'];
+const CHILD_DETAIL_ADULT = ['在外地工作', '过年才回来', '偶尔打个电话'];
 
 /** Where the day actually happens: a neighbourhood, a flat, a few familiar corners. */
 const AREAS = ['老城区', '新城区', '江边', '大学城旁边', '地铁沿线', '菜市场附近'];
@@ -301,12 +308,18 @@ function deriveRelations(rnd, jobCategory, age, shape = {}) {
     relations.push({ id: 'partner', kind: 'partner', role: '伴侣', name: anyName(), detail: pick(rnd, partnerPool) });
     if (hasChild) {
       const girl = rnd() < 0.5;
+      // Born when she was somewhere in her late twenties to mid thirties, so the child's
+      // present age follows, and so does the sentence.
+      const childBornAt = Math.max(24, Math.min(age - 1, 27 + Math.floor(rnd() * 8)));
+      const childAge = Math.max(0, age - childBornAt);
+      const childPool =
+        childAge < 7 ? CHILD_DETAIL_YOUNG : childAge < 13 ? CHILD_DETAIL_KID : childAge < 19 ? CHILD_DETAIL_TEEN : CHILD_DETAIL_ADULT;
       relations.push({
         id: 'child',
         kind: 'child',
         role: girl ? '女儿' : '儿子',
         name: nextFrom(girl ? GIVEN_FEMALE : GIVEN_MALE),
-        detail: pick(rnd, CHILD_DETAIL),
+        detail: pick(rnd, childPool),
       });
     }
   }
@@ -1691,7 +1704,7 @@ export const CATALOG = {
     work: { office: WORK_RELATIONS_OFFICE, remote: WORK_RELATIONS_REMOTE },
     classmate: { roles: CLASS_ROLES, detail: CLASS_DETAIL },
     partnerDetail: PARTNER_DETAIL,
-    childDetail: CHILD_DETAIL,
+    childDetail: { young: CHILD_DETAIL_YOUNG, kid: CHILD_DETAIL_KID, teen: CHILD_DETAIL_TEEN, adult: CHILD_DETAIL_ADULT },
   },
   places: { areas: AREAS, homeDetail: HOME_DETAIL, nearby: NEARBY, commute: COMMUTE },
   day: { slots: DAY_SLOTS, activities: DAY_ACTIVITIES },
