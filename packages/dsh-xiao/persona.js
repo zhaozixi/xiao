@@ -1085,6 +1085,49 @@ export function usableSources(result) {
 }
 
 /**
+ * Lines the harness adds around a user's message. They are stripped, not used: matching a
+ * memory against "Current runtime context" would connect the wrong things, and the runtime
+ * block arrives inside the same message content as the turn itself.
+ */
+const RUNTIME_LINE = /^(Current runtime context|Current DSH file policy|Current DeepSeek Harness|Current working directory|Current DSH Web GUI URL|Browser time zone for this request|Time sampled|Interpret otherwise-unqualified dates|Approval prompts are disabled|Tokens prefixed with|The following is|# Runtime)/;
+
+/**
+ * Pull the user's own words out of a user/message event. The content travels as an array
+ * of parts and may include the runtime preamble, so the preamble lines are removed and what
+ * survives is the turn. Unreadable input yields an empty string rather than a guess.
+ * @param {object} event - a session event.
+ * @returns {string} at most 400 characters.
+ */
+export function extractUserText(event) {
+  const pieces = [];
+  const visit = (value, depth) => {
+    if (depth > 4 || value == null || pieces.length > 40) return;
+    if (typeof value === 'string') {
+      pieces.push(value);
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item, depth + 1);
+      return;
+    }
+    if (typeof value === 'object') {
+      for (const key of ['text', 'content', 'message', 'parts', 'value', 'blocks']) {
+        if (key in value) visit(value[key], depth + 1);
+      }
+    }
+  };
+  visit(event?.data ?? event, 0);
+  if (pieces.length === 0) return '';
+
+  const kept = pieces
+    .join('\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !RUNTIME_LINE.test(line));
+  return kept.join('\n').slice(0, 400);
+}
+
+/**
  * Render the memories that came to mind unbidden, within a character budget.
  * @param {object[]} hits - results from {@link searchMemory}.
  * @param {{assocMaxChars?: number}} cfg - budget.

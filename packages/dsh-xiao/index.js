@@ -27,6 +27,7 @@ import {
   planUpdate,
   catchupWindow,
   renderCard,
+  extractUserText,
   renderAssoc,
   renderGap,
   renderNow,
@@ -446,48 +447,6 @@ export function apply(ctx, config) {
       .catch((error) => log('warn', `could not record the introduction: ${error?.message ?? error}`));
   };
 
-  /**
-   * Pull the user's words out of the user/message event.
-   *
-   * The event can carry injected text as well as the thing the person typed (the runtime
-   * block, tool reminders), so the obvious boilerplate is dropped and the last surviving
-   * piece is taken: that is the turn itself. Anything unreadable yields an empty string and
-   * nothing happens, which is the safe direction — a wrong association is worse than none.
-   */
-  const eventText = (event) => {
-    const BOILERPLATE = [
-      'Current runtime context',
-      'Tokens prefixed with',
-      'The following is',
-      '# Runtime',
-      'You are an AI agent',
-      'Time sampled',
-      '<',
-    ];
-    const looksInjected = (text) => BOILERPLATE.some((prefix) => text.startsWith(prefix)) || text.length > 1200;
-
-    const candidates = [];
-    const visit = (value, depth) => {
-      if (depth > 4 || value == null) return;
-      if (typeof value === 'string') {
-        const text = value.trim();
-        if (text && !looksInjected(text)) candidates.push(text);
-        return;
-      }
-      if (Array.isArray(value)) {
-        for (const item of value) visit(item, depth + 1);
-        return;
-      }
-      if (typeof value === 'object') {
-        for (const key of ['text', 'content', 'message', 'parts', 'value', 'blocks']) {
-          if (key in value) visit(value[key], depth + 1);
-        }
-      }
-    };
-    visit(event?.data ?? event, 0);
-    return (candidates[candidates.length - 1] ?? '').slice(0, 400);
-  };
-
   // What the user just said, and how long they had been away. Both exist so the next
   // prompt can carry them: memory that comes unbidden, and a gap she can mention.
   let lastUserText = '';
@@ -503,7 +462,7 @@ export function apply(ctx, config) {
     if (header.origin === 'subagent') return;
     if (cfg.enabledForPresets.length > 0 && !cfg.enabledForPresets.includes(header.agentPreset ?? '')) return;
 
-    const text = eventText(event);
+    const text = extractUserText(event);
     if (text) lastUserText = text;
     try {
       const data = (event && (event.data ?? event)) || {};
@@ -951,7 +910,7 @@ export function apply(ctx, config) {
       const payload = {
         ready: true,
         rulesVersion: view.rulesVersion,
-        now: moment ? { label: moment.label, text: moment.text, slot: moment.slot } : undefined,
+        now: moment ? { label: moment.label, text: moment.text, slot: moment.slot } : null,
         dayPlan: moment ? moment.plan : [],
         identity: {
           name: '晓',
@@ -961,7 +920,7 @@ export function apply(ctx, config) {
           birthCity: view.birthCity,
           currentCity: view.currentCity,
           job: view.jobChosen ? view.job : null,
-        jobFallback: view.jobChosen ? undefined : view.job,
+        ...(view.jobChosen ? {} : { jobFallback: view.job }),
           jobCategory: view.jobCategory,
           jobChosen: view.jobChosen,
         },
@@ -1090,7 +1049,7 @@ export function apply(ctx, config) {
     return {
       ready: true,
       instanceId: view.instanceId,
-      now: moment ? { label: moment.label, text: moment.text, slot: moment.slot } : undefined,
+      now: moment ? { label: moment.label, text: moment.text, slot: moment.slot } : null,
       dayPlan: moment ? moment.plan : [],
       identity: {
         name: '晓',
@@ -1100,7 +1059,7 @@ export function apply(ctx, config) {
         birthCity: view.birthCity,
         currentCity: view.currentCity,
         job: view.jobChosen ? view.job : null,
-        jobFallback: view.jobChosen ? undefined : view.job,
+        ...(view.jobChosen ? {} : { jobFallback: view.job }),
         jobCategory: view.jobCategory,
         jobChosen: view.jobChosen,
       },
@@ -1127,7 +1086,7 @@ export function apply(ctx, config) {
       factsCount: view.factCount,
       facts: page,
       factsTotal: all.length,
-      oldestSeq: page.length > 0 ? page[0].seq : undefined,
+      oldestSeq: page.length > 0 ? page[0].seq : null,
       pageRequests: { ...pageHits },
       feed: feedState,
     };

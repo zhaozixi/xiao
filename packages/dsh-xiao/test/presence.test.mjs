@@ -1,9 +1,37 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { RULES_VERSION, fold, renderAssoc, renderGap, searchMemory, toneOf } from '../persona.js';
+import { RULES_VERSION, extractUserText, fold, renderAssoc, renderGap, searchMemory, toneOf } from '../persona.js';
 
 const DAY = 86_400_000;
+
+// ---------------------------------------------------------------------------
+// Reading the user's words out of the event
+// ---------------------------------------------------------------------------
+
+const withRuntime = [
+  'Current runtime context. This snapshot supersedes earlier runtime-context snapshots.',
+  '',
+  'Current working directory: "D:\\workspace\\xiao".',
+  '',
+  'Browser time zone for this request: Asia/Shanghai. Interpret otherwise-unqualified dates and times in this zone.',
+  '',
+  '有对话了',
+].join('\n');
+
+test('the runtime preamble is stripped and the message survives', () => {
+  const event = { data: { role: 'user', id: 'x', content: [{ type: 'text', text: withRuntime }] } };
+  assert.equal(extractUserText(event), '有对话了');
+  assert.equal(extractUserText({ data: { content: ['你在干嘛'] } }), '你在干嘛');
+  assert.equal(extractUserText({ data: { parts: [{ text: '第一行' }, { text: '第二行' }] } }), '第一行\n第二行');
+});
+
+test('nothing readable yields nothing, never a guess', () => {
+  assert.equal(extractUserText(null), '');
+  assert.equal(extractUserText({}), '');
+  assert.equal(extractUserText({ data: { content: [42] } }), '');
+  assert.equal(extractUserText({ data: { content: [withRuntime.split('\n')[0]] } }), '', 'a bare preamble is not a message');
+});
 
 // ---------------------------------------------------------------------------
 // Memories that come unbidden
