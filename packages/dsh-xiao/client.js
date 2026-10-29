@@ -952,6 +952,9 @@ window.__ModuleLoader__.load({
       );
       const [dayFilter, setDayFilter] = React.useState(prefs.day ?? null);
       const [search, setSearch] = React.useState(prefs.search ?? '');
+      // Declared before the effect that depends on it: the dependency array is evaluated
+      // during render, so referencing it earlier is a temporal dead zone.
+      const [view, setView] = React.useState(prefs.view === 'brain' ? 'brain' : 'timeline');
 
       React.useEffect(() => {
         writePrefs({ hidden: [...hidden], day: dayFilter, search, view });
@@ -964,7 +967,6 @@ window.__ModuleLoader__.load({
       }, [readRevision]);
 
       const value = state.status === 'ready' ? state.value ?? {} : null;
-      const [view, setView] = React.useState(prefs.view === 'brain' ? 'brain' : 'timeline');
       const facts = React.useMemo(() => {
         const map = new Map();
         for (const fact of value?.facts ?? []) map.set(fact.seq, fact);
@@ -1550,7 +1552,7 @@ window.__ModuleLoader__.load({
       inject: ['slots', 'locale'],
       // Exposed for the offline tests: the brain layout is pure and worth testing without
       // a browser. Not part of the plugin contract.
-      _internals: { buildBrain, stepBrain, MemoryBrain },
+      _internals: { buildBrain, stepBrain, MemoryBrain, XiaoPage },
       apply(ctx) {
         // Fail loud at activation rather than as a silent blank slot.
         h('div', null);

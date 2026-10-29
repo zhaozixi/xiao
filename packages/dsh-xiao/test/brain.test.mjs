@@ -10,10 +10,12 @@ let plugin;
 const ReactStub = {
   // A tiny vnode shape, so the component's tree can be inspected.
   createElement: (type, props, ...children) => ({ type, props, children }),
-  useState: () => [undefined, () => {}],
+  // Hooks return their initial value, which is enough to run a component once — and that
+  // catches things like referencing a later `const` from a dependency array.
+  useState: (initial) => [typeof initial === 'function' ? initial() : initial, () => {}],
   useEffect: () => {},
-  useMemo: () => ({}),
-  useRef: () => ({ current: null }),
+  useMemo: (fn) => fn(),
+  useRef: (initial) => ({ current: initial }),
   useCallback: (fn) => fn,
   Component: class {},
 };
@@ -34,7 +36,7 @@ globalThis.window = {
 
 await import('../client.js');
 
-const { buildBrain, stepBrain, MemoryBrain } = plugin._internals;
+const { buildBrain, stepBrain, MemoryBrain, XiaoPage } = plugin._internals;
 
 const VALUE = {
   relations: [
@@ -116,4 +118,14 @@ test('the component renders a canvas and a hint', () => {
   assert.equal(canvas.props.style.height, 420);
   const hint = tree.children.find((child) => child && child.type === 'div');
   assert.ok(hint, 'the hint line is rendered');
+});
+
+test('the page runs once without touching a variable before it exists', () => {
+  // This is the guard for a real crash: the view toggle was declared after the effect that
+  // listed it as a dependency, and the dependency array is evaluated during render.
+  const ctx = { locale: { getLocale: () => ({ active: 'zh' }) } };
+  const tree = XiaoPage({ ctx });
+  assert.ok(tree, 'the page produced a tree');
+  const toggle = JSON.stringify(tree).includes('viewBrain') || JSON.stringify(tree).includes('记忆脑图');
+  assert.ok(toggle, 'the view toggle is present');
 });
