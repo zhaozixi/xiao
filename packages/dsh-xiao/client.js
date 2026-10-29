@@ -737,6 +737,63 @@ window.__ModuleLoader__.load({
         let frame = 0;
         let width = 0;
         let height = 0;
+        let sky = null;
+        let stars = [];
+
+        // A soft ball of light per colour, drawn once and reused: one radial gradient per
+        // node per frame is the difference between 60fps and a slideshow at this size.
+        const sprites = new Map();
+        const glowSprite = (colour) => {
+          if (sprites.has(colour)) return sprites.get(colour);
+          if (typeof document === 'undefined' || typeof document.createElement !== 'function') return null;
+          const sprite = document.createElement('canvas');
+          sprite.width = 64;
+          sprite.height = 64;
+          const sctx = sprite.getContext('2d');
+          const gradient = sctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+          gradient.addColorStop(0, colour);
+          gradient.addColorStop(0.35, `${colour}88`);
+          gradient.addColorStop(1, `${colour}00`);
+          sctx.fillStyle = gradient;
+          sctx.fillRect(0, 0, 64, 64);
+          sprites.set(colour, sprite);
+          return sprite;
+        };
+
+        // The sky: a fixed slice of space behind her, turning with the graph.
+        const buildSky = () => {
+          let seed = 0x9e3779b9;
+          const rand = () => {
+            seed ^= seed << 13;
+            seed ^= seed >>> 17;
+            seed ^= seed << 5;
+            return ((seed >>> 0) % 10000) / 10000;
+          };
+          stars = Array.from({ length: 220 }, () => {
+            const theta = rand() * Math.PI * 2;
+            const phi = Math.acos(2 * rand() - 1);
+            const radius = 520 + rand() * 900;
+            return {
+              x: Math.sin(phi) * Math.cos(theta) * radius,
+              y: Math.cos(phi) * radius,
+              z: Math.sin(phi) * Math.sin(theta) * radius,
+              size: 0.4 + rand() * 1.4,
+              alpha: 0.25 + rand() * 0.65,
+            };
+          });
+          const gradient = context.createRadialGradient(
+            width * 0.42,
+            height * 0.36,
+            Math.min(width, height) * 0.05,
+            width * 0.5,
+            height * 0.5,
+            Math.max(width, height) * 0.95,
+          );
+          gradient.addColorStop(0, '#16233d');
+          gradient.addColorStop(0.45, '#0a1020');
+          gradient.addColorStop(1, '#020308');
+          sky = gradient;
+        };
 
         const resize = () => {
           const ratio = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
@@ -746,6 +803,7 @@ window.__ModuleLoader__.load({
           canvas.width = Math.round(width * ratio);
           canvas.height = Math.round(height * ratio);
           context.setTransform(ratio, 0, 0, ratio, 0, 0);
+          buildSky();
         };
         resize();
         const onResize = () => resize();
@@ -758,7 +816,6 @@ window.__ModuleLoader__.load({
             view.settle -= 1;
           }
           if (!view.dragging) view.yaw += 0.0022;
-          context.clearRect(0, 0, width, height);
           const cx = width / 2;
           const cy = height / 2;
           const cosYaw = Math.cos(view.yaw);
@@ -767,6 +824,32 @@ window.__ModuleLoader__.load({
           const sinPitch = Math.sin(view.pitch);
           const focal = Math.min(width, height) * 1.15;
           const zoom = view.zoom;
+
+          // Deep space first: the gradient is cached, the stars are the only per-frame work.
+          context.globalCompositeOperation = 'source-over';
+          context.clearRect(0, 0, width, height);
+          if (sky) {
+            context.fillStyle = sky;
+            context.fillRect(0, 0, width, height);
+          }
+          context.globalCompositeOperation = 'lighter';
+          for (const star of stars) {
+            const x1 = star.x * cosYaw - star.z * sinYaw;
+            const z1 = star.x * sinYaw + star.z * cosYaw;
+            const y2 = star.y * cosPitch - z1 * sinPitch;
+            const z2 = star.y * sinPitch + z1 * cosPitch;
+            const depth = z2 + 1400;
+            if (depth < 200) continue;
+            const scale = focal / depth;
+            const sx = cx + x1 * scale * zoom;
+            const sy = cy + y2 * scale * zoom;
+            if (sx < -4 || sy < -4 || sx > width + 4 || sy > height + 4) continue;
+            context.globalAlpha = star.alpha * Math.min(1, 600 / depth);
+            context.fillStyle = '#cfe3ff';
+            context.fillRect(sx, sy, star.size, star.size);
+          }
+          context.globalAlpha = 1;
+          context.globalCompositeOperation = 'source-over';
 
           const project = (node) => {
             const x1 = node.x * cosYaw - node.z * sinYaw;
@@ -793,36 +876,62 @@ window.__ModuleLoader__.load({
             const b = projected.get(edge.b);
             if (!a || !b || !a.visible || !b.visible) continue;
             const depth = (a.depth + b.depth) / 2;
-            const alpha = Math.max(0.03, Math.min(0.42, 0.32 - depth / 2400));
-            context.strokeStyle = edge.kind === 'mention' ? `rgba(120, 170, 200, ${alpha + 0.08})` : `rgba(150, 150, 150, ${alpha})`;
+            const alpha = Math.max(0.06, Math.min(0.5, 0.4 - depth / 2200));
+            context.strokeStyle =
+              edge.kind === 'mention' ? `rgba(126, 196, 232, ${alpha + 0.09})` : `rgba(140, 160, 190, ${alpha})`;
             context.beginPath();
             context.moveTo(a.sx, a.sy);
             context.lineTo(b.sx, b.sy);
             context.stroke();
           }
 
+          // Nodes are lights: an additive halo around a small hot core. Additive blending
+          // is what makes two memories that share a person look like they glow together.
           const ordered = [...graph.nodes].sort((x, y) => (projected.get(x)?.depth ?? 0) - (projected.get(y)?.depth ?? 0));
+          context.globalCompositeOperation = 'lighter';
           for (const node of ordered) {
             const point = projected.get(node);
             if (!point || !point.visible) continue;
-            const radius = Math.max(1.6, node.r * point.scale * 1.35);
+            const colour = BRAIN_COLORS[node.group] ?? BRAIN_COLORS.other;
             const isSelected = view.selected === node.id;
-            context.globalAlpha = Math.max(0.35, Math.min(1, 0.95 - point.depth / 3000));
+            const radius = Math.max(1.4, node.r * point.scale * 1.2);
+            const halo = radius * (node.hub ? 4.2 : 3.2) * (isSelected ? 1.25 : 1);
+            const depthFade = Math.max(0.4, Math.min(1, 1.05 - point.depth / 2600));
+            const sprite = glowSprite(colour);
+            context.globalAlpha = depthFade * 0.9;
+            if (sprite) context.drawImage(sprite, point.sx - halo, point.sy - halo, halo * 2, halo * 2);
+            context.globalAlpha = Math.min(1, depthFade + 0.15);
             context.beginPath();
-            context.arc(point.sx, point.sy, radius, 0, Math.PI * 2);
-            context.fillStyle = BRAIN_COLORS[node.group] ?? BRAIN_COLORS.other;
+            context.arc(point.sx, point.sy, Math.max(1, radius * 0.55), 0, Math.PI * 2);
+            context.fillStyle = '#ffffff';
             context.fill();
             if (isSelected) {
-              context.lineWidth = 2;
-              context.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+              context.globalAlpha = 0.9;
+              context.beginPath();
+              context.arc(point.sx, point.sy, radius * 1.6, 0, Math.PI * 2);
+              context.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+              context.lineWidth = 1.5;
               context.stroke();
             }
-            if (node.hub || isSelected) {
-              context.globalAlpha = 1;
-              context.fillStyle = 'rgba(230, 230, 230, 0.85)';
-              context.font = '11px system-ui, sans-serif';
-              context.fillText(node.label.slice(0, 18), point.sx + radius + 3, point.sy + 3);
-            }
+          }
+
+          // Labels stay in normal blending: text drawn additively over stars is unreadable.
+          context.globalCompositeOperation = 'source-over';
+          for (const node of ordered) {
+            const point = projected.get(node);
+            if (!point || !point.visible) continue;
+            const isSelected = view.selected === node.id;
+            if (!node.hub && !isSelected) continue;
+            const radius = Math.max(1.4, node.r * point.scale * 1.2);
+            context.globalAlpha = Math.max(0.55, Math.min(0.95, 1 - point.depth / 3000));
+            context.font = '11px system-ui, sans-serif';
+            const label = node.label.slice(0, 18);
+            // A dark halo behind the text keeps it readable when it lands on a bright core.
+            context.lineWidth = 3;
+            context.strokeStyle = 'rgba(2, 4, 10, 0.85)';
+            context.strokeText(label, point.sx + radius + 6, point.sy + 4);
+            context.fillStyle = 'rgba(226, 236, 250, 0.95)';
+            context.fillText(label, point.sx + radius + 6, point.sy + 4);
           }
           context.globalAlpha = 1;
           frame = requestAnimationFrame(draw);
@@ -912,7 +1021,7 @@ window.__ModuleLoader__.load({
             height: 420,
             borderRadius: 10,
             border: `1px solid ${C.line}`,
-            background: 'radial-gradient(circle at 30% 20%, rgba(60,70,90,0.35), rgba(12,14,18,0.9))',
+            background: '#020308',
             touchAction: 'none',
             cursor: 'grab',
           },
