@@ -94,7 +94,16 @@ const FIRST_MEETING_HINT =
  * length is a real per-turn cost (a first draft was twice this long).
  */
 const JOB_CHOICE_HINT =
-  '你的职业还没定：自己挑一个配得上你年龄、性格、住处和兴趣的工作，然后用 xiao_update（set_job，category 选 student / job_seeking / employed / unemployed / retired）记下来。';
+  '你的职业还没定：自己挑一个配得上你年龄、性格、住处和兴趣的工作，用 xiao_update set_job 记下来。' +
+  'category 选 student / job_seeking / employed / unemployed / retired；' +
+  'job 写她正在做的事（例如「在书店做店员」「在找工作」），不要写「还没定」。';
+
+/**
+ * The one line that tells her the memory index exists. It is also subtracted from the
+ * user's message when the association query is built, so it lives in a constant.
+ */
+const RECALL_HINT =
+  '想不起具体细节时，用 xiao_recall 查（对方说过的事、你自己的经历、你查过的资料）；查不到就说记不清，不要编。';
 
 function normalizeConfig(config) {
   const cfg = { ...DEFAULTS };
@@ -447,6 +456,42 @@ export function apply(ctx, config) {
       .catch((error) => log('warn', `could not record the introduction: ${error?.message ?? error}`));
   };
 
+  /**
+   * Every line this plugin itself puts into the prompt, so it can be subtracted from what
+   * the user/message event carries. The event can contain the whole assembled prompt (her
+   * own card and her research turned up in it), and matching memory against her own
+   * description produces confident nonsense: the card says 听老歌, so "listening" matched.
+   *
+   * Exact comparison is not enough on its own — the host may keep a copy from an earlier
+   * assembly, one character different — so the lines are also recognised by their opening
+   * words and by the tool names they mention.
+   */
+  const PROMPT_PREFIXES = ['想不起具体细节', '你的职业还没定', '这是你们的第一次见面', '你听到这个词', '你最近自己查过', '此刻是'];
+  const PROMPT_MARKERS = ['xiao_recall', 'xiao_update', 'xiao_state', 'xiao_life', '虚拟角色', '你听到这个词'];
+  const looksLikePrompt = (line) =>
+    PROMPT_PREFIXES.some((prefix) => line.startsWith(prefix)) || PROMPT_MARKERS.some((marker) => line.includes(marker));
+
+  function ownPromptLines() {
+    const lines = new Set();
+    const add = (text) => {
+      for (const line of String(text ?? '').split('\n')) {
+        const trimmed = line.trim();
+        if (trimmed) lines.add(trimmed);
+      }
+    };
+    const view = state.view;
+    add(RECALL_HINT);
+    if (view) {
+      add(renderCard(view, cfg));
+      add(FIRST_MEETING_HINT);
+      add(JOB_CHOICE_HINT);
+      add(renderUserNotes(view, cfg));
+      add(renderResearch(researchNotes(), cfg));
+      add(renderNow(currentMoment(view, Date.now()), cfg));
+    }
+    return lines;
+  }
+
   // What the user just said, and how long they had been away. Both exist so the next
   // prompt can carry them: memory that comes unbidden, and a gap she can mention.
   let lastUserText = '';
@@ -462,8 +507,14 @@ export function apply(ctx, config) {
     if (header.origin === 'subagent') return;
     if (cfg.enabledForPresets.length > 0 && !cfg.enabledForPresets.includes(header.agentPreset ?? '')) return;
 
-    const text = extractUserText(event);
-    if (text) lastUserText = text;
+    const raw = extractUserText(event);
+    const own = ownPromptLines();
+    const keptLines = raw
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !own.has(line) && !looksLikePrompt(line));
+    // The turn sits at the end of the composed prompt, so the tail is what matters.
+    lastUserText = keptLines.join('\n').slice(-400).trim();
     try {
       const data = (event && (event.data ?? event)) || {};
       lastEventShape = Object.keys(data)
@@ -663,7 +714,7 @@ export function apply(ctx, config) {
     order: 904,
     text: (assembleContext) => {
       if (!allowsInjection(assembleContext) || !(state.view?.factCount > 1)) return '';
-      return '想不起具体细节时，用 xiao_recall 查（对方说过的事、你自己的经历、你查过的资料）；查不到就说记不清，不要编。';
+      return RECALL_HINT;
     },
   });
 

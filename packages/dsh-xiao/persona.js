@@ -1095,8 +1095,12 @@ const RUNTIME_LINE = /^(Current runtime context|Current DSH file policy|Current 
  * Pull the user's own words out of a user/message event. The content travels as an array
  * of parts and may include the runtime preamble, so the preamble lines are removed and what
  * survives is the turn. Unreadable input yields an empty string rather than a guess.
+ *
+ * The text is returned whole (up to a generous ceiling) rather than truncated: the event
+ * can carry the entire composed prompt, and the turn sits at the end of it — trimming the
+ * head of the string would keep the prompt and throw away the message.
  * @param {object} event - a session event.
- * @returns {string} at most 400 characters.
+ * @returns {string} the surviving text.
  */
 export function extractUserText(event) {
   const pieces = [];
@@ -1124,7 +1128,7 @@ export function extractUserText(event) {
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => line.length > 0 && !RUNTIME_LINE.test(line));
-  return kept.join('\n').slice(0, 400);
+  return kept.join('\n').slice(0, 8000);
 }
 
 /**
