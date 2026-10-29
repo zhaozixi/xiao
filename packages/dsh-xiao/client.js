@@ -20,6 +20,9 @@ window.__ModuleLoader__.load({
         remembersHint: '只有你明确说过的事才会被记住；想让她忘掉就说「忘掉那条」。',
         timeline: '事实时间线',
         pageHint: '追加式日志：只写不改，删除靠墓碑标记。',
+        viewTimeline: '时间线',
+        viewBrain: '记忆脑图',
+        brainHint: '拖动旋转，滚轮缩放，点节点看名称。连线＝她是因什么把这两件事联系起来的。',
         emptyChat: '还没有任何事实。和她聊几句，这里会开始长出东西。',
         emptyFiltered: '当前筛选下没有内容。',
         loading: '读取中…',
@@ -118,6 +121,9 @@ window.__ModuleLoader__.load({
         remembersHint: 'Only things you actually stated get remembered; say "forget that" to drop one.',
         timeline: 'Fact timeline',
         pageHint: 'Append-only log: write once, never rewritten; deletion is a tombstone.',
+        viewTimeline: 'Timeline',
+        viewBrain: 'Memory brain',
+        brainHint: 'Drag to rotate, scroll to zoom, click a node for its name. Lines show why two things belong together.',
         emptyChat: 'No facts yet. Talk to her for a while and this starts to grow.',
         emptyFiltered: 'Nothing matches the current filter.',
         loading: 'Loading…',
@@ -539,6 +545,390 @@ window.__ModuleLoader__.load({
       );
     }
 
+    // -----------------------------------------------------------------------
+    // Memory brain: a 3D force graph drawn on a plain canvas.
+    //
+    // No library: the projection, the simulation and the drawing are ~200 lines.
+    // Nodes are what she knows; edges are why the pieces belong together (a person
+    // mentioned in an event, an interest behind a search, a city where something
+    // happened). It is the same data the prompt uses, laid out spatially.
+    // -----------------------------------------------------------------------
+
+    const BRAIN_COLORS = {
+      self: '#d9a441',
+      family: '#4ea1d3',
+      friend: '#5bc0a5',
+      partner: '#e07a8b',
+      child: '#c98bd9',
+      work: '#8a9bb8',
+      interest: '#7bb36b',
+      place: '#b98c5a',
+      user_fact: '#4d7ea8',
+      event: '#6f8a9c',
+      job: '#d98c4a',
+      research: '#9b8ad3',
+      other: '#7a7a7a',
+    };
+
+    /** Build the graph: nodes with an initial position on a sphere, edges by association. */
+    function buildBrain(value) {
+      const nodes = [];
+      const edges = [];
+      const byId = new Map();
+      const add = (node) => {
+        const entry = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, r: 3, ...node };
+        if (byId.has(entry.id)) return byId.get(entry.id);
+        byId.set(entry.id, entry);
+        nodes.push(entry);
+        return entry;
+      };
+      const link = (a, b, kind = 'soft') => {
+        if (!a || !b || a === b) return;
+        edges.push({ a, b, kind });
+      };
+
+      const self = add({ id: 'self', label: '晓', group: 'self', r: 11, hub: true });
+
+      for (const relation of value?.relations ?? []) {
+        add({ id: `rel:${relation.id ?? relation.name}`, label: relation.name, group: relation.kind ?? 'other', r: 7, hub: true });
+      }
+      for (const interest of value?.interests ?? []) {
+        add({ id: `int:${interest}`, label: interest, group: 'interest', r: 5, hub: true });
+      }
+      const places = value?.places ?? {};
+      if (places.home?.area) add({ id: 'place:home', label: places.home.area, group: 'place', r: 5, hub: true });
+      if (places.work?.name) add({ id: 'place:work', label: places.work.name, group: 'place', r: 5 });
+      for (const spot of places.nearby ?? []) add({ id: `spot:${spot}`, label: spot, group: 'place', r: 4 });
+
+      // Facts: the memory itself. Only the ones that carry text are worth a node.
+      const facts = (value?.facts ?? []).slice(-120);
+      for (const fact of facts) {
+        const data = fact?.data ?? {};
+        let label = '';
+        if (fact.kind === 'user_fact' || fact.kind === 'health' || fact.kind === 'event') label = String(data.text ?? '');
+        else if (fact.kind === 'job') label = String(data.job ?? '');
+        else if (fact.kind === 'override' && data.field === 'city') label = `搬到${data.value}`;
+        else if (fact.kind === 'override' && data.field === 'nearby') label = String(data.value ?? '');
+        if (!label) continue;
+        add({ id: `fact:${fact.seq}`, label, group: fact.kind === 'event' ? 'event' : fact.kind === 'job' ? 'job' : 'user_fact', r: 3.5, at: fact.at });
+      }
+      for (const note of value?.research ?? []) {
+        add({ id: `note:${note.at}`, label: String(note.query ?? ''), group: 'research', r: 3.5, at: note.at });
+      }
+
+      for (const node of nodes) {
+        if (node.group === 'self') continue;
+        link(self, node, 'anchor');
+      }
+
+      // Association edges: a sentence that mentions a person, a city or an interest is
+      // connected to it. This is what makes the picture look like a brain rather than a
+      // list of dots: the same name pulls several memories towards one node.
+      const named = nodes.filter((node) => ['family', 'friend', 'partner', 'child', 'work'].includes(node.group));
+      const placeNodes = nodes.filter((node) => node.group === 'place');
+      const interestNodes = nodes.filter((node) => node.group === 'interest');
+      const city = String(places.home?.city ?? '');
+      for (const node of nodes) {
+        if (node.group !== 'event' && node.group !== 'user_fact' && node.group !== 'research') continue;
+        const text = node.label;
+        for (const person of named) if (person.label && text.includes(person.label)) link(node, person, 'mention');
+        for (const spot of placeNodes) if (spot.label && text.includes(spot.label)) link(node, spot, 'mention');
+        if (city && text.includes(city)) {
+          const home = byId.get('place:home');
+          if (home) link(node, home, 'mention');
+        }
+        for (const interest of interestNodes) if (interest.label && text.includes(interest.label)) link(node, interest, 'mention');
+      }
+
+      // A small deterministic puff so the initial layout is not a straight line.
+      let seed = 2166136261;
+      const rand = () => {
+        seed ^= seed << 13;
+        seed ^= seed >>> 17;
+        seed ^= seed << 5;
+        return ((seed >>> 0) % 1000) / 1000;
+      };
+      for (const node of nodes) {
+        const theta = rand() * Math.PI * 2;
+        const phi = Math.acos(2 * rand() - 1);
+        const radius = node.group === 'self' ? 0 : 60 + rand() * 90;
+        node.x = Math.sin(phi) * Math.cos(theta) * radius;
+        node.y = Math.cos(phi) * radius * 0.8;
+        node.z = Math.sin(phi) * Math.sin(theta) * radius;
+      }
+      return { nodes, edges };
+    }
+
+    /** One step of the 3D force layout: repel everything, pull along edges, stay centred. */
+    function stepBrain(graph) {
+      const { nodes, edges } = graph;
+      for (let i = 0; i < nodes.length; i += 1) {
+        const a = nodes[i];
+        for (let j = i + 1; j < nodes.length; j += 1) {
+          const b = nodes[j];
+          let dx = a.x - b.x;
+          let dy = a.y - b.y;
+          let dz = a.z - b.z;
+          let distance = dx * dx + dy * dy + dz * dz;
+          if (distance < 1) distance = 1;
+          if (distance > 40000) continue;
+          const force = 320 / distance;
+          const length = Math.sqrt(distance);
+          dx /= length;
+          dy /= length;
+          dz /= length;
+          a.vx += dx * force;
+          a.vy += dy * force;
+          a.vz += dz * force;
+          b.vx -= dx * force;
+          b.vy -= dy * force;
+          b.vz -= dz * force;
+        }
+      }
+      for (const edge of edges) {
+        const dx = edge.b.x - edge.a.x;
+        const dy = edge.b.y - edge.a.y;
+        const dz = edge.b.z - edge.a.z;
+        const length = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+        const target = edge.kind === 'anchor' ? 95 : 55;
+        const pull = (length - target) * (edge.kind === 'anchor' ? 0.02 : 0.012);
+        const ux = (dx / length) * pull;
+        const uy = (dy / length) * pull;
+        const uz = (dz / length) * pull;
+        if (!edge.a.hub || edge.a.group !== 'self') {
+          edge.a.vx += ux;
+          edge.a.vy += uy;
+          edge.a.vz += uz;
+        }
+        edge.b.vx -= ux;
+        edge.b.vy -= uy;
+        edge.b.vz -= uz;
+      }
+      for (const node of nodes) {
+        if (node.group === 'self') {
+          node.vx = 0;
+          node.vy = 0;
+          node.vz = 0;
+          node.x = 0;
+          node.y = 0;
+          node.z = 0;
+          continue;
+        }
+        node.vx *= 0.82;
+        node.vy *= 0.82;
+        node.vz *= 0.82;
+        node.x += node.vx * 0.35;
+        node.y += node.vy * 0.35;
+        node.z += node.vz * 0.35;
+      }
+    }
+
+    function MemoryBrain(props) {
+      const { graph, dict } = props;
+      const canvasRef = React.useRef(null);
+      const viewRef = React.useRef({ yaw: 0.55, pitch: -0.22, zoom: 1, dragging: false, lastX: 0, lastY: 0, settle: 320, hover: null, selected: null });
+      const [selected, setSelected] = React.useState(null);
+
+      React.useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas || typeof canvas.getContext !== 'function') return undefined;
+        const context = canvas.getContext('2d');
+        if (!context) return undefined;
+        let frame = 0;
+        let width = 0;
+        let height = 0;
+
+        const resize = () => {
+          const ratio = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
+          const rect = canvas.getBoundingClientRect ? canvas.getBoundingClientRect() : { width: 640, height: 420 };
+          width = Math.max(240, Math.round(rect.width));
+          height = Math.max(220, Math.round(rect.height));
+          canvas.width = Math.round(width * ratio);
+          canvas.height = Math.round(height * ratio);
+          context.setTransform(ratio, 0, 0, ratio, 0, 0);
+        };
+        resize();
+        const onResize = () => resize();
+        if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('resize', onResize);
+
+        const draw = () => {
+          const view = viewRef.current;
+          if (view.settle > 0) {
+            stepBrain(graph);
+            view.settle -= 1;
+          }
+          if (!view.dragging) view.yaw += 0.0022;
+          context.clearRect(0, 0, width, height);
+          const cx = width / 2;
+          const cy = height / 2;
+          const cosYaw = Math.cos(view.yaw);
+          const sinYaw = Math.sin(view.yaw);
+          const cosPitch = Math.cos(view.pitch);
+          const sinPitch = Math.sin(view.pitch);
+          const focal = Math.min(width, height) * 1.15;
+          const zoom = view.zoom;
+
+          const project = (node) => {
+            const x1 = node.x * cosYaw - node.z * sinYaw;
+            const z1 = node.x * sinYaw + node.z * cosYaw;
+            const y2 = node.y * cosPitch - z1 * sinPitch;
+            const z2 = node.y * sinPitch + z1 * cosPitch;
+            const depth = z2 + 340;
+            const scale = focal / Math.max(60, depth);
+            return {
+              sx: cx + x1 * scale * zoom,
+              sy: cy + y2 * scale * zoom,
+              scale: scale * zoom,
+              depth: z2,
+              visible: depth > 40,
+            };
+          };
+
+          const projected = new Map();
+          for (const node of graph.nodes) projected.set(node, project(node));
+
+          context.lineWidth = 1;
+          for (const edge of graph.edges) {
+            const a = projected.get(edge.a);
+            const b = projected.get(edge.b);
+            if (!a || !b || !a.visible || !b.visible) continue;
+            const depth = (a.depth + b.depth) / 2;
+            const alpha = Math.max(0.03, Math.min(0.42, 0.32 - depth / 2400));
+            context.strokeStyle = edge.kind === 'mention' ? `rgba(120, 170, 200, ${alpha + 0.08})` : `rgba(150, 150, 150, ${alpha})`;
+            context.beginPath();
+            context.moveTo(a.sx, a.sy);
+            context.lineTo(b.sx, b.sy);
+            context.stroke();
+          }
+
+          const ordered = [...graph.nodes].sort((x, y) => (projected.get(x)?.depth ?? 0) - (projected.get(y)?.depth ?? 0));
+          for (const node of ordered) {
+            const point = projected.get(node);
+            if (!point || !point.visible) continue;
+            const radius = Math.max(1.6, node.r * point.scale * 1.35);
+            const isSelected = view.selected === node.id;
+            context.globalAlpha = Math.max(0.35, Math.min(1, 0.95 - point.depth / 3000));
+            context.beginPath();
+            context.arc(point.sx, point.sy, radius, 0, Math.PI * 2);
+            context.fillStyle = BRAIN_COLORS[node.group] ?? BRAIN_COLORS.other;
+            context.fill();
+            if (isSelected) {
+              context.lineWidth = 2;
+              context.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+              context.stroke();
+            }
+            if (node.hub || isSelected) {
+              context.globalAlpha = 1;
+              context.fillStyle = 'rgba(230, 230, 230, 0.85)';
+              context.font = '11px system-ui, sans-serif';
+              context.fillText(node.label.slice(0, 18), point.sx + radius + 3, point.sy + 3);
+            }
+          }
+          context.globalAlpha = 1;
+          frame = requestAnimationFrame(draw);
+        };
+        frame = requestAnimationFrame(draw);
+
+        const hit = (clientX, clientY) => {
+          const view = viewRef.current;
+          const rect = canvas.getBoundingClientRect();
+          const cx = width / 2;
+          const cy = height / 2;
+          const cosYaw = Math.cos(view.yaw);
+          const sinYaw = Math.sin(view.yaw);
+          const cosPitch = Math.cos(view.pitch);
+          const sinPitch = Math.sin(view.pitch);
+          const focal = Math.min(width, height) * 1.15;
+          let best = null;
+          let bestDistance = 18;
+          for (const node of graph.nodes) {
+            const x1 = node.x * cosYaw - node.z * sinYaw;
+            const z1 = node.x * sinYaw + node.z * cosYaw;
+            const y2 = node.y * cosPitch - z1 * sinPitch;
+            const z2 = node.y * sinPitch + z1 * cosPitch;
+            const scale = focal / Math.max(60, z2 + 340);
+            const sx = cx + x1 * scale * view.zoom;
+            const sy = cy + y2 * scale * view.zoom;
+            const distance = Math.hypot(sx - (clientX - rect.left), sy - (clientY - rect.top));
+            if (distance < bestDistance) {
+              bestDistance = distance;
+              best = node;
+            }
+          }
+          view.selected = best?.id ?? null;
+          setSelected(best ?? null);
+        };
+
+        const onDown = (event) => {
+          const view = viewRef.current;
+          view.dragging = true;
+          view.lastX = event.clientX;
+          view.lastY = event.clientY;
+        };
+        const onMove = (event) => {
+          const view = viewRef.current;
+          if (!view.dragging) return;
+          view.yaw += (event.clientX - view.lastX) * 0.008;
+          view.pitch = Math.max(-1.2, Math.min(1.2, view.pitch + (event.clientY - view.lastY) * 0.006));
+          view.lastX = event.clientX;
+          view.lastY = event.clientY;
+        };
+        const onUp = () => {
+          viewRef.current.dragging = false;
+        };
+        const onWheel = (event) => {
+          event.preventDefault();
+          const view = viewRef.current;
+          view.zoom = Math.max(0.4, Math.min(2.6, view.zoom * (event.deltaY > 0 ? 0.92 : 1.08)));
+        };
+        const onClick = (event) => hit(event.clientX, event.clientY);
+
+        canvas.addEventListener('pointerdown', onDown);
+        canvas.addEventListener('pointermove', onMove);
+        canvas.addEventListener('pointerup', onUp);
+        canvas.addEventListener('pointerleave', onUp);
+        canvas.addEventListener('wheel', onWheel, { passive: false });
+        canvas.addEventListener('click', onClick);
+
+        return () => {
+          cancelAnimationFrame(frame);
+          if (typeof window !== 'undefined' && window.removeEventListener) window.removeEventListener('resize', onResize);
+          canvas.removeEventListener('pointerdown', onDown);
+          canvas.removeEventListener('pointermove', onMove);
+          canvas.removeEventListener('pointerup', onUp);
+          canvas.removeEventListener('pointerleave', onUp);
+          canvas.removeEventListener('wheel', onWheel);
+          canvas.removeEventListener('click', onClick);
+        };
+      }, [graph]);
+
+      return h(
+        'div',
+        { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
+        h('canvas', {
+          ref: canvasRef,
+          style: {
+            width: '100%',
+            height: 420,
+            borderRadius: 10,
+            border: `1px solid ${C.line}`,
+            background: 'radial-gradient(circle at 30% 20%, rgba(60,70,90,0.35), rgba(12,14,18,0.9))',
+            touchAction: 'none',
+            cursor: 'grab',
+          },
+        }),
+        h(
+          'div',
+          { style: { display: 'flex', gap: 12, alignItems: 'baseline', flexWrap: 'wrap', fontSize: 12, color: C.dim } },
+          h('span', null, dict.brainHint),
+          selected
+            ? h('span', { style: { color: C.text } }, `${selected.label} · ${dict.kinds?.[selected.group] ?? selected.group}`)
+            : null,
+        ),
+      );
+    }
+
+
     function XiaoIcon(props) {
       const size = props?.size ?? 18;
       const active = Boolean(props?.active);
@@ -564,8 +954,8 @@ window.__ModuleLoader__.load({
       const [search, setSearch] = React.useState(prefs.search ?? '');
 
       React.useEffect(() => {
-        writePrefs({ hidden: [...hidden], day: dayFilter, search });
-      }, [hidden, dayFilter, search]);
+        writePrefs({ hidden: [...hidden], day: dayFilter, search, view });
+      }, [hidden, dayFilter, search, view]);
 
       // A fresh read supersedes every older page that was loaded.
       const readRevision = state.status === 'ready' ? state.value : null;
@@ -574,12 +964,16 @@ window.__ModuleLoader__.load({
       }, [readRevision]);
 
       const value = state.status === 'ready' ? state.value ?? {} : null;
+      const [view, setView] = React.useState(prefs.view === 'brain' ? 'brain' : 'timeline');
       const facts = React.useMemo(() => {
         const map = new Map();
         for (const fact of value?.facts ?? []) map.set(fact.seq, fact);
         for (const fact of older) if (!map.has(fact.seq)) map.set(fact.seq, fact);
         return [...map.values()].sort((a, b) => a.seq - b.seq);
       }, [value, older]);
+      // The brain is built from the same payload the timeline uses; facts beyond the first
+      // page are added as they load, so the picture grows with the list.
+      const graph = React.useMemo(() => buildBrain({ ...(value ?? {}), facts }), [value, facts]);
 
       const bySeq = React.useMemo(() => new Map(facts.map((fact) => [fact.seq, fact])), [facts]);
       const total = Number.isFinite(value?.factsTotal) ? value.factsTotal : facts.length;
@@ -804,7 +1198,53 @@ window.__ModuleLoader__.load({
       return h(
         'div',
         { style: { height: '100%', overflowY: 'auto', padding: '28px 32px 40px', boxSizing: 'border-box' } },
-        h('div', { style: { maxWidth: 880, margin: '0 auto' } }, body),
+        h(
+          'div',
+          { style: { maxWidth: 880, margin: '0 auto' } },
+          h(
+            'div',
+            { style: { display: 'flex', gap: 6, marginBottom: 12 } },
+            h(
+              'button',
+              {
+                type: 'button',
+                onClick: () => setView('timeline'),
+                style: {
+                  cursor: 'pointer',
+                  font: 'inherit',
+                  fontSize: 12,
+                  padding: '4px 12px',
+                  borderRadius: 6,
+                  border: `1px solid ${C.line}`,
+                  background: view === 'timeline' ? C.layer : 'transparent',
+                  color: view === 'timeline' ? C.text : C.dim,
+                },
+              },
+              dict.viewTimeline,
+            ),
+            h(
+              'button',
+              {
+                type: 'button',
+                onClick: () => setView('brain'),
+                style: {
+                  cursor: 'pointer',
+                  font: 'inherit',
+                  fontSize: 12,
+                  padding: '4px 12px',
+                  borderRadius: 6,
+                  border: `1px solid ${C.line}`,
+                  background: view === 'brain' ? C.layer : 'transparent',
+                  color: view === 'brain' ? C.text : C.dim,
+                },
+              },
+              dict.viewBrain,
+            ),
+          ),
+          view === 'brain' && value?.ready
+            ? h('div', { key: 'brain' }, h('h2', { style: { margin: '0 0 10px', fontSize: 18, fontWeight: 600, color: C.text } }, dict.viewBrain), h(MemoryBrain, { graph, dict }))
+            : body,
+        ),
       );
     }
 
@@ -1108,6 +1548,9 @@ window.__ModuleLoader__.load({
     return {
       // `locale` must be declared: a Client service accessor throws without it.
       inject: ['slots', 'locale'],
+      // Exposed for the offline tests: the brain layout is pure and worth testing without
+      // a browser. Not part of the plugin contract.
+      _internals: { buildBrain, stepBrain, MemoryBrain },
       apply(ctx) {
         // Fail loud at activation rather than as a silent blank slot.
         h('div', null);
