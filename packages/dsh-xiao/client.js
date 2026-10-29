@@ -895,7 +895,7 @@ window.__ModuleLoader__.load({
             const colour = BRAIN_COLORS[node.group] ?? BRAIN_COLORS.other;
             const isSelected = view.selected === node.id;
             const radius = Math.max(1.4, node.r * point.scale * 1.2);
-            const halo = radius * (node.hub ? 4.2 : 3.2) * (isSelected ? 1.25 : 1);
+            const halo = radius * (node.hub ? 3.1 : 2.3) * (isSelected ? 1.2 : 1);
             const depthFade = Math.max(0.4, Math.min(1, 1.05 - point.depth / 2600));
             const sprite = glowSprite(colour);
             context.globalAlpha = depthFade * 0.9;
