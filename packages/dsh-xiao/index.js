@@ -27,6 +27,8 @@ import {
   planUpdate,
   catchupWindow,
   renderCard,
+  renderAssoc,
+  renderGap,
   renderNow,
   renderResearch,
   renderUserNotes,
@@ -74,6 +76,8 @@ const DEFAULTS = {
   temporaryFactDays: 14,
   /** Character budget for one memory-recall answer. */
   recallMaxChars: 600,
+  /** Character budget for the memories that come unbidden when she hears a known word. */
+  assocMaxChars: 120,
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -109,6 +113,7 @@ function normalizeConfig(config) {
     if (typeof config.chooseOwnJob === 'boolean') cfg.chooseOwnJob = config.chooseOwnJob;
     if (Number.isFinite(config.temporaryFactDays)) cfg.temporaryFactDays = Math.max(0, Math.floor(config.temporaryFactDays));
     if (Number.isFinite(config.recallMaxChars)) cfg.recallMaxChars = Math.max(0, Math.floor(config.recallMaxChars));
+    if (Number.isFinite(config.assocMaxChars)) cfg.assocMaxChars = Math.max(0, Math.floor(config.assocMaxChars));
   }
   return cfg;
 }
@@ -136,7 +141,7 @@ export function apply(ctx, config) {
    * What each prompt block actually costs, so "budget" is a measured number rather than a
    * promise. Updated on every assembly; read by `xiao_state`.
    */
-  const stats = { blocks: { persona: 0, user: 0, research: 0, now: 0 }, injections: 0, recalls: 0, researchCalls: 0 };
+  const stats = { blocks: { persona: 0, user: 0, research: 0, now: 0, assoc: 0, gap: 0 }, injections: 0, recalls: 0, researchCalls: 0 };
   const sessions = new Map();
   const pageHits = { total: 0, page: 0 };
   // 'missing' until the feed route registers, then 'ok'. Surfaced by `xiao_state` so a
@@ -441,6 +446,99 @@ export function apply(ctx, config) {
       .catch((error) => log('warn', `could not record the introduction: ${error?.message ?? error}`));
   };
 
+  /**
+   * Pull the user's words out of the user/message event.
+   *
+   * The event can carry injected text as well as the thing the person typed (the runtime
+   * block, tool reminders), so the obvious boilerplate is dropped and the last surviving
+   * piece is taken: that is the turn itself. Anything unreadable yields an empty string and
+   * nothing happens, which is the safe direction — a wrong association is worse than none.
+   */
+  const eventText = (event) => {
+    const BOILERPLATE = [
+      'Current runtime context',
+      'Tokens prefixed with',
+      'The following is',
+      '# Runtime',
+      'You are an AI agent',
+      'Time sampled',
+      '<',
+    ];
+    const looksInjected = (text) => BOILERPLATE.some((prefix) => text.startsWith(prefix)) || text.length > 1200;
+
+    const candidates = [];
+    const visit = (value, depth) => {
+      if (depth > 4 || value == null) return;
+      if (typeof value === 'string') {
+        const text = value.trim();
+        if (text && !looksInjected(text)) candidates.push(text);
+        return;
+      }
+      if (Array.isArray(value)) {
+        for (const item of value) visit(item, depth + 1);
+        return;
+      }
+      if (typeof value === 'object') {
+        for (const key of ['text', 'content', 'message', 'parts', 'value', 'blocks']) {
+          if (key in value) visit(value[key], depth + 1);
+        }
+      }
+    };
+    visit(event?.data ?? event, 0);
+    return (candidates[candidates.length - 1] ?? '').slice(0, 400);
+  };
+
+  // What the user just said, and how long they had been away. Both exist so the next
+  // prompt can carry them: memory that comes unbidden, and a gap she can mention.
+  let lastUserText = '';
+  let gapMs = 0;
+  let seenWrittenAt = 0;
+  // The shape of the last user/message event, for diagnosis: the extractor guesses which
+  // keys carry the words, and a wrong guess fails silently.
+  let lastEventShape = '';
+
+  ctx.on('session/event', (session, event) => {
+    if (!session || event?.type !== 'user/message') return;
+    const header = session.header ?? {};
+    if (header.origin === 'subagent') return;
+    if (cfg.enabledForPresets.length > 0 && !cfg.enabledForPresets.includes(header.agentPreset ?? '')) return;
+
+    const text = eventText(event);
+    if (text) lastUserText = text;
+    try {
+      const data = (event && (event.data ?? event)) || {};
+      lastEventShape = Object.keys(data)
+        .map((key) => {
+          const value = data[key];
+          if (typeof value === 'string') return `${key}:str(${value.length})`;
+          if (Array.isArray(value)) return `${key}:arr(${value.length})`;
+          return `${key}:${typeof value}`;
+        })
+        .join(' ');
+    } catch (error) {
+      lastEventShape = 'unreadable';
+    }
+
+    const now = Date.now();
+    // Read the previous visit before overwriting it, so the gap is the real one.
+    try {
+      const previous = Number(flagsTable()?.get('lastSeen')?.at);
+      gapMs = Number.isFinite(previous) && previous > 0 ? Math.max(0, now - previous) : 0;
+    } catch (error) {
+      gapMs = 0;
+    }
+    if (now - seenWrittenAt > 60_000) {
+      seenWrittenAt = now;
+      try {
+        flagsTable()
+          ?.put('lastSeen', { at: now })
+          .catch((error) => log('warn', `could not record the visit: ${error?.message ?? error}`));
+      } catch (error) {
+        /* storage not ready yet; the next message will retry */
+      }
+    }
+  });
+
   ctx.on('session/event', (session, event) => {
     if (!cfg.announceOnFirstMeeting || !session || event?.type !== 'user/message') return;
     const id = session.id;
@@ -607,6 +705,55 @@ export function apply(ctx, config) {
     text: (assembleContext) => {
       if (!allowsInjection(assembleContext) || !(state.view?.factCount > 1)) return '';
       return '想不起具体细节时，用 xiao_recall 查（对方说过的事、你自己的经历、你查过的资料）；查不到就说记不清，不要编。';
+    },
+  });
+
+  /**
+   * Memory that comes unbidden: when the user's words touch something she knows, the two
+   * closest memories are injected. This is the difference between "she could look it up"
+   * and "it came to mind" — the first requires the model to think of searching, the second
+   * is what a person actually does.
+   */
+  ctx.systemPrompt.context({
+    name: 'xiao.assoc',
+    order: 905,
+    text: (assembleContext) => {
+      if (!allowsInjection(assembleContext) || !lastUserText || cfg.assocMaxChars <= 0) return '';
+      if (!state.domain) return '';
+      try {
+        const records = memoryRecords({
+          records: [...state.domain.table('facts').entries()].map(([, record]) => record),
+          cfg,
+          now: Date.now(),
+        }).filter((record) => record.kind !== 'event');
+        const result = searchMemory({
+          facts: records,
+          notes: researchNotes(),
+          events: Array.isArray(state.view?.eventsAll) ? state.view.eventsAll : [],
+          query: lastUserText,
+          limit: 2,
+        });
+        const text = renderAssoc(result.hits, cfg);
+        if (!text) return '';
+        stats.blocks.assoc = text.length;
+        return text;
+      } catch (error) {
+        return '';
+      }
+    },
+  });
+
+  // She knows how long it has been. A person notices an absence; without this she is
+  // always meeting you as if it were a minute ago.
+  ctx.systemPrompt.context({
+    name: 'xiao.gap',
+    order: 906,
+    text: (assembleContext) => {
+      if (!allowsInjection(assembleContext)) return '';
+      const text = renderGap(gapMs);
+      if (!text) return '';
+      stats.blocks.gap = text.length;
+      return text;
     },
   });
 
@@ -825,7 +972,16 @@ export function apply(ctx, config) {
         research: researchNotes().slice(-3),
         disputed: view.disputed,
         expiredNotes: view.expiredNotes,
-        stats: { ...stats, blocks: { ...stats.blocks } },
+        stats: {
+          ...stats,
+          blocks: { ...stats.blocks },
+          // Diagnostics for the association block: if the last message was never captured,
+          // this stays 0 and the reason is the event shape, not an empty memory.
+          lastUserChars: lastUserText.length,
+          lastUserSample: lastUserText.slice(0, 60),
+          lastEventShape,
+          gapMs,
+        },
         webAvailable: Boolean(ctx.get('web') && typeof ctx.get('web').search === 'function'),
         traits: {
           outlook: view.outlook,

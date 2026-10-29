@@ -1085,6 +1085,41 @@ export function usableSources(result) {
 }
 
 /**
+ * Render the memories that came to mind unbidden, within a character budget.
+ * @param {object[]} hits - results from {@link searchMemory}.
+ * @param {{assocMaxChars?: number}} cfg - budget.
+ * @returns {string} the block, or an empty string when nothing fits.
+ */
+export function renderAssoc(hits, cfg) {
+  const budget = Number(cfg?.assocMaxChars ?? 0);
+  if (!budget || budget <= 0) return '';
+  const lines = [];
+  let used = 0;
+  for (const hit of Array.isArray(hits) ? hits : []) {
+    const summary = typeof hit?.summary === 'string' ? hit.summary : '';
+    if (!summary) continue;
+    const line = `- ${summary}`;
+    if (used + line.length + 1 > budget) break;
+    lines.push(line);
+    used += line.length + 1;
+  }
+  return lines.length === 0 ? '' : `你听到这个词，想起了：\n${lines.join('\n')}`;
+}
+
+/**
+ * How long it has been, in a form she can say out loud. Below two hours it says nothing:
+ * "we spoke forty minutes ago" is not something a person remarks on.
+ * @param {number} gapMs - milliseconds since the previous visit.
+ * @returns {string} the line, or an empty string.
+ */
+export function renderGap(gapMs) {
+  if (!Number.isFinite(gapMs) || gapMs < 2 * 60 * 60 * 1000) return '';
+  const days = Math.floor(gapMs / DAY_MS);
+  const hours = Math.floor(gapMs / (60 * 60 * 1000));
+  return `你们上一次说话是 ${days >= 1 ? `${days} 天` : `${hours} 小时`}前。`;
+}
+
+/**
  * Render what she looked up recently, as her own memory rather than user facts.
  * @param {object[]} notes - stored notes, oldest first.
  * @param {{ researchMaxChars?: number }} cfg - budget.
@@ -1394,23 +1429,58 @@ export function catchupWindow(lastDay, today, maxDays) {
  * @param {object[]} events - committed events.
  * @returns {string} one of a small closed set.
  */
+const TONE_BY_KIND = {
+  work: '有点累',
+  study: '有点累',
+  mishap: '不太顺',
+  good: '心情不错',
+  social: '心情不错',
+  rest: '松下来',
+};
+const TONE_SIGN = { good: 1, social: 1, mishap: -1, work: -0.35, study: -0.35, rest: 0 };
+
+/**
+ * Tone is a pure function of the committed events — never stored, so it can never drift
+ * away from what actually happened.
+ *
+ * It used to look only at the newest event, which meant one bad afternoon erased a good
+ * week and one good afternoon erased a bad one. Now the last eight events vote, weighted
+ * by recency: a single event still decides on its own, a mood survives a few contrary
+ * days, and a clear majority flips it.
+ * @param {object[]} events - committed events, any order.
+ * @returns {string} one of a small closed set.
+ */
 export function toneOf(events) {
   if (!Array.isArray(events) || events.length === 0) return '平静';
-  const latest = [...events].sort((a, b) => b.at - a.at)[0];
-  switch (latest.kind) {
-    case 'work':
-    case 'study':
-      return '有点累';
-    case 'mishap':
-      return '不太顺';
-    case 'good':
-    case 'social':
-      return '心情不错';
-    case 'rest':
-      return '松下来';
-    default:
-      return '平静';
+  const window = [...events]
+    .filter((event) => event && typeof event.kind === 'string')
+    .sort((a, b) => (Number(b.at) || 0) - (Number(a.at) || 0))
+    .slice(0, 8);
+  if (window.length === 0) return '平静';
+
+  const weight = new Map();
+  let total = 0;
+  let score = 0;
+  for (let index = 0; index < window.length; index += 1) {
+    const kind = window[index].kind;
+    const w = 0.7 ** index;
+    weight.set(kind, (weight.get(kind) ?? 0) + w);
+    total += w;
+    score += w * (TONE_SIGN[kind] ?? 0);
   }
+
+  let bestKind = '';
+  let bestWeight = 0;
+  for (const [kind, w] of weight) {
+    if (w > bestWeight) {
+      bestWeight = w;
+      bestKind = kind;
+    }
+  }
+  if (bestWeight / total >= 0.5 && TONE_BY_KIND[bestKind]) return TONE_BY_KIND[bestKind];
+  if (score > 0.15) return '心情不错';
+  if (score < -0.15) return '不太顺';
+  return '平静';
 }
 
 /**
