@@ -630,14 +630,35 @@ export function apply(ctx, config) {
   });
 
   /** Shared gate for every prompt contribution this plugin makes. */
+  // Which agent preset is asking. The session header does not carry it in this build, so it
+  // is asked from the registry that owns presets; the answer is cached per session.
+  let lastPreset = '';
+  const presetCache = new Map();
+  const presetForSession = (sessionId) => {
+    if (!sessionId) return '';
+    if (presetCache.has(sessionId)) return presetCache.get(sessionId);
+    let preset = '';
+    try {
+      const agent = ctx.get('agents')?.get?.(sessionId);
+      if (agent) preset = String(ctx.get('agentPresets')?.composedPreset?.(agent.ctx) ?? '');
+    } catch (error) {
+      preset = '';
+    }
+    if (!preset) preset = String(sessions.get(sessionId)?.agentPreset ?? '');
+    presetCache.set(sessionId, preset);
+    return preset;
+  };
+
   const allowsInjection = (assembleContext) => {
     if (!state.ready || !state.view) return false;
     const sessionId = assembleContext?.scope?.id;
     const header = sessionId ? sessions.get(sessionId) : undefined;
     if (header && header.origin === 'subagent') return false;
-    if (header && cfg.enabledForPresets.length > 0) {
-      return cfg.enabledForPresets.includes(header.agentPreset ?? '');
-    }
+    // Resolved on every assembly, not only when the filter is set: the name has to be
+    // observable before anyone can configure it.
+    const preset = presetForSession(sessionId);
+    if (preset) lastPreset = preset;
+    if (cfg.enabledForPresets.length > 0 && preset) return cfg.enabledForPresets.includes(preset);
     return true;
   };
 
@@ -990,6 +1011,7 @@ export function apply(ctx, config) {
           lastUserChars: lastUserText.length,
           lastUserSample: lastUserText.slice(0, 60),
           lastEventShape,
+          preset: lastPreset,
           gapMs,
         },
         webAvailable: Boolean(ctx.get('web') && typeof ctx.get('web').search === 'function'),
@@ -1273,4 +1295,4 @@ export function apply(ctx, config) {
   log('info', 'mounted');
 }
 
-export const inject = ['storageDomain', 'systemPrompt', 'tools', 'connection'];
+export const inject = ['storageDomain', 'systemPrompt', 'tools', 'connection', 'agents', 'agentPresets'];
